@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
-import health from '@/routes/health'
-import whatsapp from '@/routes/whatsapp'
-import { init as initWhatsApp } from '@/clients/whatsapp'
+import health from '@/routes/health.js'
+import whatsapp from '@/routes/whatsapp.js'
+import { init as initWhatsApp } from '@/clients/whatsapp.js'
 
 const app = new Hono()
 

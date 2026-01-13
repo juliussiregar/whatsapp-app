@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { whatsAppClient } from '@/clients/whatsapp'
+import { whatsAppClient } from '@/clients/whatsapp.js'
 
 const whatsapp = new Hono()
 
