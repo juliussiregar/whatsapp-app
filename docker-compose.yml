@@ -1,0 +1,16 @@
+services:
+  whatsapp-bot:
+    build: .
+    container_name: so-whatsapp-bot
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    volumes:
+      # Persist WhatsApp session data
+      - whatsapp-session:/app/.wwebjs_auth
+    restart: unless-stopped
+
+volumes:
+  whatsapp-session:

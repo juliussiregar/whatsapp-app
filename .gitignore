@@ -1,0 +1,68 @@
+# WWebjs
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript / build
+dist/
+build/
+out/
+lib/
+*.tsbuildinfo
+
+# Hono / deployment outputs
+.vercel/
+.vercel_build_output/
+.netlify/
+.serverless/
+.vercel/project.json
+
+# Environment
+.env
+.env.*.local
+.env.local
+.env.test
+.env.production
+
+# Logs
+logs/
+*.log
+.pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Testing / coverage
+coverage/
+.nyc_output/
+coverage/*
+
+# Caches
+.cache/
+.parcel-cache/
+jest-cache/
+.tmp/
+temp/
+tmp/
+
+# OS / editors / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+
+# Docker
+docker-compose.override.yml
+
+# Misc
+dist-ssr/
+output/
