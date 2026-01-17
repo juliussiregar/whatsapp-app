@@ -1,7 +1,11 @@
 import { Hono } from 'hono'
 import { whatsAppClient } from '@/clients/whatsapp.js'
 import whatsappWeb from 'whatsapp-web.js'
+import { promises as fs } from 'fs'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 const { MessageMedia } = whatsappWeb
+const execAsync = promisify(exec)
 
 const whatsapp = new Hono()
 
@@ -334,6 +338,195 @@ whatsapp.post('/send-group-image', async (c) => {
       error: 'Failed to send group image',
       details: errorMessage,
       stack: errorStack
+    }, 500)
+  }
+})
+
+// Endpoint untuk logout dari WhatsApp
+whatsapp.post('/logout', async (c) => {
+  try {
+    console.log('Logging out from WhatsApp...')
+    
+    // Logout dan destroy client
+    await whatsAppClient.logout()
+    await whatsAppClient.destroy()
+    
+    // Clean up browser processes
+    try {
+      await execAsync('pkill -f "chromium.*wwebjs_auth" || true')
+      console.info('Cleaned up browser processes')
+    } catch (error) {
+      console.info('No browser processes to clean up')
+    }
+
+    return c.json({
+      success: true,
+      message: 'Logged out successfully from WhatsApp'
+    })
+  } catch (error) {
+    console.error('Error logging out:', error)
+    
+    const errorMessage = error instanceof Error ? error.message : String(error)
+
+    return c.json({
+      success: false,
+      error: 'Failed to logout',
+      details: errorMessage
+    }, 500)
+  }
+})
+
+// Endpoint untuk menghapus auth data
+whatsapp.delete('/auth', async (c) => {
+  try {
+    console.log('Clearing auth data...')
+    
+    const authPath = './.wwebjs_auth'
+    
+    try {
+      // Hapus folder auth
+      await fs.rm(authPath, { recursive: true, force: true })
+      console.info('Auth data cleared successfully')
+      
+      return c.json({
+        success: true,
+        message: 'Auth data cleared successfully',
+        note: 'Please restart the service to initialize new session'
+      })
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // Folder tidak ada, sudah bersih
+        return c.json({
+          success: true,
+          message: 'Auth data already cleared or does not exist'
+        })
+      }
+      throw error
+    }
+  } catch (error) {
+    console.error('Error clearing auth data:', error)
+    
+    const errorMessage = error instanceof Error ? error.message : String(error)
+
+    return c.json({
+      success: false,
+      error: 'Failed to clear auth data',
+      details: errorMessage
+    }, 500)
+  }
+})
+
+// Endpoint untuk menghapus cache data
+whatsapp.delete('/cache', async (c) => {
+  try {
+    console.log('Clearing cache data...')
+    
+    const cachePath = './.wwebjs_cache'
+    
+    try {
+      // Hapus folder cache
+      await fs.rm(cachePath, { recursive: true, force: true })
+      console.info('Cache data cleared successfully')
+      
+      return c.json({
+        success: true,
+        message: 'Cache data cleared successfully'
+      })
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // Folder tidak ada, sudah bersih
+        return c.json({
+          success: true,
+          message: 'Cache data already cleared or does not exist'
+        })
+      }
+      throw error
+    }
+  } catch (error) {
+    console.error('Error clearing cache data:', error)
+    
+    const errorMessage = error instanceof Error ? error.message : String(error)
+
+    return c.json({
+      success: false,
+      error: 'Failed to clear cache data',
+      details: errorMessage
+    }, 500)
+  }
+})
+
+// Endpoint untuk reset lengkap (logout + hapus auth + hapus cache)
+whatsapp.post('/reset', async (c) => {
+  try {
+    console.log('Resetting WhatsApp service (logout + clear auth + clear cache)...')
+    
+    const results = {
+      logout: false,
+      authCleared: false,
+      cacheCleared: false
+    }
+
+    // 1. Logout
+    try {
+      await whatsAppClient.logout()
+      await whatsAppClient.destroy()
+      
+      // Clean up browser processes
+      try {
+        await execAsync('pkill -f "chromium.*wwebjs_auth" || true')
+      } catch (error) {
+        // Ignore error
+      }
+      
+      results.logout = true
+      console.info('Logged out successfully')
+    } catch (error) {
+      console.warn('Logout error (might already be logged out):', error)
+    }
+
+    // 2. Clear auth
+    const authPath = './.wwebjs_auth'
+    try {
+      await fs.rm(authPath, { recursive: true, force: true })
+      results.authCleared = true
+      console.info('Auth data cleared')
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        console.warn('Error clearing auth:', error)
+      } else {
+        results.authCleared = true // Folder tidak ada = sudah bersih
+      }
+    }
+
+    // 3. Clear cache
+    const cachePath = './.wwebjs_cache'
+    try {
+      await fs.rm(cachePath, { recursive: true, force: true })
+      results.cacheCleared = true
+      console.info('Cache data cleared')
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        console.warn('Error clearing cache:', error)
+      } else {
+        results.cacheCleared = true // Folder tidak ada = sudah bersih
+      }
+    }
+
+    return c.json({
+      success: true,
+      message: 'WhatsApp service reset successfully',
+      results,
+      note: 'Please restart the service to initialize new session'
+    })
+  } catch (error) {
+    console.error('Error resetting service:', error)
+    
+    const errorMessage = error instanceof Error ? error.message : String(error)
+
+    return c.json({
+      success: false,
+      error: 'Failed to reset service',
+      details: errorMessage
     }, 500)
   }
 })
