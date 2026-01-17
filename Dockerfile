@@ -1,4 +1,21 @@
 # Build stage
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies (including dev dependencies for build)
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build TypeScript
+RUN npm run build
+
+# Production stage
 FROM node:20-slim
 
 RUN apt-get update && apt-get install -y \
@@ -24,19 +41,24 @@ RUN apt-get update && apt-get install -y \
 # Set Chromium path
 ENV BROWSER_PATH=/usr/bin/chromium \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    NODE_ENV=production
 
 WORKDIR /app
 
-# Copy source code
-COPY . .
+# Copy package files
+COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install only production dependencies
+RUN npm ci --omit=dev
 
-# Create directory for WhatsApp session data
-RUN mkdir -p .wwebjs_auth && chown -R node:node .wwebjs_auth
-RUN mkdir -p .wwebjs_cache && chown -R node:node .wwebjs_cache
+# Copy built files from builder
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package.json ./package.json
+
+# Create directory for WhatsApp session data with correct ownership
+RUN mkdir -p .wwebjs_auth .wwebjs_cache && \
+    chown -R node:node .wwebjs_auth .wwebjs_cache
 
 # Use non-root user
 USER node
@@ -45,4 +67,4 @@ USER node
 EXPOSE 3000
 
 # Start the application
-CMD ["npm", "dev"]
+CMD ["npm", "start"]

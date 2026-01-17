@@ -7,10 +7,15 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
+      - BROWSER_PATH=/usr/bin/chromium
+      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
     volumes:
       # Persist WhatsApp session data
       - whatsapp-session:/app/.wwebjs_auth
+      - whatsapp-cache:/app/.wwebjs_cache
     restart: unless-stopped
 
 volumes:
   whatsapp-session:
+  whatsapp-cache:

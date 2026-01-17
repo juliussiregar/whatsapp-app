@@ -53,7 +53,20 @@ async function init() {
 
   // When the message is comming
   whatsAppClient.on("message", async (message) => {
-    await whatsAppClient.sendSeen(message.from);
+    try {
+      // Coba mark as seen, tapi tangani error jika chat belum ada
+      await whatsAppClient.sendSeen(message.from);
+    } catch (error: any) {
+      // Error markedUnread terjadi jika chat belum ada atau belum fully initialized
+      // Ini tidak critical, pesan tetap diterima
+      const errorMessage = error?.message || String(error) || '';
+      if (errorMessage.includes('markedUnread')) {
+        console.warn(`Warning: Could not mark message as seen for ${message.from} (chat may not be fully initialized yet)`);
+      } else {
+        // Log error lain untuk debugging
+        console.error(`Error marking message as seen for ${message.from}:`, error);
+      }
+    }
   });
 
   whatsAppClient.initialize();
