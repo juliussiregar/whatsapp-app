@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { whatsAppClient } from '@/clients/whatsapp.js'
+import { whatsAppClient, isReady } from '@/clients/whatsapp.js'
 import whatsappWeb from 'whatsapp-web.js'
 import { promises as fs } from 'fs'
 import { exec } from 'child_process'
@@ -8,6 +8,17 @@ const { MessageMedia } = whatsappWeb
 const execAsync = promisify(exec)
 
 const whatsapp = new Hono()
+
+// Endpoint untuk check status client
+whatsapp.get('/status', (c) => {
+  const ready = isReady()
+  return c.json({
+    ready,
+    message: ready 
+      ? 'WhatsApp client is ready to send messages' 
+      : 'WhatsApp client is not ready. Please wait for initialization and scan QR code if needed.'
+  })
+})
 
 // Helper function untuk format nomor
 function formatPhoneNumber(phoneNumber: string): string {
@@ -66,25 +77,92 @@ async function getGroupChat(groupId?: string, groupName?: string) {
 
   if (groupId) {
     console.log(`Getting group by ID: ${groupId}`)
-    groupChat = await whatsAppClient.getChatById(groupId)
     
-    if (!groupChat) {
-      throw new Error(`Group with ID ${groupId} not found. Make sure you're still in the group.`)
+    // Coba getChatById dulu, tapi jika error, fallback ke getChats()
+    try {
+      groupChat = await whatsAppClient.getChatById(groupId)
+      
+      if (groupChat && groupChat.isGroup) {
+        return groupChat
+      }
+      
+      if (groupChat && !groupChat.isGroup) {
+        throw new Error(`Chat with ID ${groupId} is not a group`)
+      }
+    } catch (error) {
+      console.warn(`getChatById failed for ${groupId}, trying getChats() fallback:`, error)
     }
-
-    if (!groupChat.isGroup) {
-      throw new Error(`Chat with ID ${groupId} is not a group`)
-    }
+    
+    // Jika getChatById gagal, kita tidak bisa fallback ke getChats() karena bug
+    // Return error dan biarkan caller handle (biasanya akan langsung gunakan sendMessage dengan groupId)
+    throw new Error(`Cannot get group with ID ${groupId}. Try using sendMessage directly with groupId instead.`)
   } else if (groupName) {
     console.log(`Searching for group by name: ${groupName}`)
-    const chats = await whatsAppClient.getChats()
     
-    groupChat = chats.find((chat: any) => 
-      chat.isGroup && chat.name?.toLowerCase() === groupName.toLowerCase()
-    )
-
-    if (!groupChat) {
-      throw new Error(`Group with name "${groupName}" not found. Make sure the group name is correct and you're still in the group.`)
+    // Gunakan workaround yang sama seperti di endpoint /groups
+    const pupPage = (whatsAppClient as any).pupPage
+    if (!pupPage) {
+      throw new Error('WhatsApp client page not available')
+    }
+    
+    try {
+      // Akses langsung ke Store.Chat.getModelsArray() tanpa getChatModel
+      const result = await pupPage.evaluate((searchName: string) => {
+        try {
+          // @ts-ignore - window tersedia di browser context
+          const chats = window.Store.Chat.getModelsArray()
+          
+          for (const chat of chats) {
+            try {
+              // @ts-ignore - window tersedia di browser context
+              const store = window.Store
+              
+              // Cek apakah ini grup
+              const hasGroupMetadata = chat.groupMetadata !== undefined && chat.groupMetadata !== null
+              const isGroupId = typeof chat.id?.isGroup === 'function' ? chat.id.isGroup() : false
+              const isGroupIdString = chat.id?._serialized?.endsWith('@g.us') || false
+              const isNewsletter = store.ChatGetters?.getIsNewsletter?.(chat) || false
+              
+              const isGroup = (hasGroupMetadata || isGroupId || isGroupIdString) && !isNewsletter
+              
+              if (isGroup) {
+                const name = chat.name || chat.formattedTitle || chat.contact?.formattedName || ''
+                if (name.toLowerCase() === searchName.toLowerCase()) {
+                  return {
+                    id: chat.id?._serialized || chat.id?.user || chat.id,
+                    name: name
+                  }
+                }
+              }
+            } catch {
+              continue
+            }
+          }
+          
+          return null
+        } catch (error) {
+          throw error
+        }
+      }, groupName)
+      
+      if (!result || !result.id) {
+        throw new Error(`Group with name "${groupName}" not found. Make sure the group name is correct and you're still in the group.`)
+      }
+      
+      // Return group info dengan ID yang ditemukan
+      // Jangan gunakan getChatById karena bisa error, langsung return object sederhana
+      return {
+        id: { _serialized: result.id },
+        name: result.name,
+        isGroup: true,
+        // Method untuk sendMessage akan menggunakan client.sendMessage dengan ID
+        sendMessage: async (content: any, options: any = {}) => {
+          return await whatsAppClient.sendMessage(result.id, content, options)
+        }
+      }
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error) || ''
+      throw new Error(`Failed to find group "${groupName}": ${errorMessage}`)
     }
   }
 
@@ -204,7 +282,30 @@ whatsapp.post('/send-group-message', async (c) => {
       }, 400)
     }
 
-    const groupChat = await getGroupChat(groupId, groupName)
+    // Jika groupId diberikan, langsung gunakan sendMessage tanpa perlu getChatById
+    // Ini lebih aman dan menghindari error "Cannot read properties of undefined"
+    if (groupId) {
+      // Validasi format groupId
+      if (!groupId.includes('@g.us')) {
+        return c.json({
+          success: false,
+          error: 'Invalid group ID format',
+          details: 'Group ID must be in format: 123456789@g.us'
+        }, 400)
+      }
+      
+      // Langsung kirim pesan ke groupId
+      await whatsAppClient.sendMessage(groupId, message, { sendSeen: false })
+      
+      return c.json({
+        success: true,
+        message: 'Group message sent successfully',
+        groupId: groupId
+      })
+    }
+
+    // Jika groupName diberikan, perlu getChat untuk mendapatkan groupId
+    const groupChat = await getGroupChat(undefined, groupName)
 
     // Kirim pesan ke grup
     await groupChat.sendMessage(message, { sendSeen: false })
@@ -233,14 +334,147 @@ whatsapp.post('/send-group-message', async (c) => {
 // Endpoint untuk mendapatkan daftar grup
 whatsapp.get('/groups', async (c) => {
   try {
-    const chats = await whatsAppClient.getChats()
-    const groups = chats
-      .filter((chat: any) => chat.isGroup)
-      .map((chat: any) => ({
-        id: chat.id._serialized,
-        name: chat.name || 'Unknown',
-        participantsCount: chat.participants?.length || 0
-      }))
+    // Workaround: Gunakan evaluate langsung untuk akses Store.Chat tanpa getChatModel
+    // Ini menghindari bug "Cannot read properties of undefined (reading 'update')"
+    let groups: any[] = []
+    let retries = 3
+    let lastError: any = null
+    
+    // Cek apakah pupPage tersedia
+    const pupPage = (whatsAppClient as any).pupPage
+    if (!pupPage) {
+      return c.json({
+        success: false,
+        error: 'WhatsApp client page not available',
+        details: 'The browser page is not initialized yet. Please wait for the client to be ready.'
+      }, 503)
+    }
+    
+    while (retries > 0) {
+      try {
+        // Akses langsung ke Store.Chat.getModelsArray() dan filter sendiri
+        // Note: window akan tersedia di browser context saat evaluate
+        const rawChats = await pupPage.evaluate(() => {
+          try {
+            // @ts-ignore - window tersedia di browser context
+            const chats = window.Store.Chat.getModelsArray()
+            const groups: any[] = []
+            let totalChats = chats.length
+            let groupCount = 0
+            
+            for (const chat of chats) {
+              try {
+                // @ts-ignore - window tersedia di browser context
+                const store = window.Store
+                
+                // Cek apakah ini grup: ada groupMetadata atau id.isGroup() atau id berakhir dengan @g.us
+                const hasGroupMetadata = chat.groupMetadata !== undefined && chat.groupMetadata !== null
+                const isGroupId = typeof chat.id?.isGroup === 'function' ? chat.id.isGroup() : false
+                const isGroupIdString = chat.id?._serialized?.endsWith('@g.us') || false
+                const isNewsletter = store.ChatGetters?.getIsNewsletter?.(chat) || false
+                
+                // Ini grup jika ada groupMetadata atau isGroup() true, dan bukan newsletter
+                const isGroup = (hasGroupMetadata || isGroupId || isGroupIdString) && !isNewsletter
+                
+                if (isGroup) {
+                  groupCount++
+                  const chatId = chat.id?._serialized || chat.id?.user || chat.id
+                  const name = chat.name || chat.formattedTitle || chat.contact?.formattedName || 'Unknown'
+                  
+                  // Get participants count dari groupMetadata jika ada
+                  let participantsCount = 0
+                  if (chat.groupMetadata && chat.groupMetadata.participants) {
+                    const participants = chat.groupMetadata.participants
+                    if (participants._models) {
+                      participantsCount = participants._models.length
+                    } else if (Array.isArray(participants)) {
+                      participantsCount = participants.length
+                    }
+                  }
+                  
+                  groups.push({
+                    id: chatId,
+                    name: name,
+                    participantsCount: participantsCount
+                  })
+                }
+              } catch (err) {
+                // Skip chat yang error
+                continue
+              }
+            }
+            
+            // Return dengan debug info
+            return { groups, debug: { totalChats, groupCount } }
+          } catch (error) {
+            throw error
+          }
+        })
+        
+        // Extract groups dari result
+        if (rawChats && typeof rawChats === 'object' && 'groups' in rawChats) {
+          groups = rawChats.groups || []
+          if (rawChats.debug) {
+            console.log(`Debug: Total chats: ${rawChats.debug.totalChats}, Groups found: ${rawChats.debug.groupCount}`)
+          }
+        } else {
+          // Fallback jika format berbeda
+          groups = Array.isArray(rawChats) ? rawChats : []
+        }
+        
+        groups = rawChats || []
+        console.log(`Found ${groups.length} groups using direct Store.Chat access`)
+        break // Success
+      } catch (error: any) {
+        lastError = error
+        retries--
+        
+        const errorMessage = error?.message || String(error) || ''
+        console.warn(`getChats() alternative method failed (attempt ${3 - retries}/3):`, errorMessage)
+        
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1500))
+        }
+      }
+    }
+    
+    // Jika masih error, coba fallback ke getChats() biasa dengan error handling lebih baik
+    if (groups.length === 0 && lastError) {
+      console.log('Trying fallback to standard getChats() method...')
+      try {
+        const chats = await whatsAppClient.getChats()
+        groups = chats
+          .filter((chat: any) => {
+            try {
+              return chat && chat.isGroup === true
+            } catch {
+              return false
+            }
+          })
+          .map((chat: any) => {
+            try {
+              return {
+                id: chat.id?._serialized || chat.id || 'unknown',
+                name: chat.name || 'Unknown',
+                participantsCount: chat.participants?.length || 0
+              }
+            } catch {
+              return null
+            }
+          })
+          .filter((group: any) => group !== null)
+      } catch (fallbackError: any) {
+        const errorMessage = lastError?.message || String(lastError) || ''
+        
+        return c.json({
+          success: false,
+          error: 'Failed to get groups due to internal WhatsApp Web state issue',
+          details: errorMessage,
+          note: 'This is a known issue with whatsapp-web.js. The client is ready, but getChats() encountered an internal error. You can still send messages to groups using groupId directly via /whatsapp/send-group-message endpoint.',
+          suggestion: 'If you know the groupId (format: 123456789@g.us), you can use it directly without needing to list groups first.'
+        }, 500)
+      }
+    }
 
     return c.json({
       success: true,
@@ -255,7 +489,8 @@ whatsapp.get('/groups', async (c) => {
     return c.json({
       success: false,
       error: 'Failed to get groups',
-      details: errorMessage
+      details: errorMessage,
+      note: 'This might be a temporary issue. Please try again or check if WhatsApp client is ready.'
     }, 500)
   }
 })
@@ -281,8 +516,6 @@ whatsapp.post('/send-group-image', async (c) => {
       }, 400)
     }
 
-    const groupChat = await getGroupChat(groupId, groupName)
-
     // Buat MessageMedia dari file path atau URL
     let media: any
     if (image.startsWith('http://') || image.startsWith('https://')) {
@@ -294,6 +527,36 @@ whatsapp.post('/send-group-image', async (c) => {
       console.log(`Loading image from file: ${image}`)
       media = MessageMedia.fromFilePath(image)
     }
+
+    // Jika groupId diberikan, langsung gunakan sendMessage tanpa perlu getGroupChat
+    // Ini lebih aman dan menghindari error "Cannot read properties of undefined"
+    if (groupId) {
+      // Validasi format groupId
+      if (!groupId.includes('@g.us')) {
+        return c.json({
+          success: false,
+          error: 'Invalid group ID format',
+          details: 'Group ID must be in format: 123456789@g.us'
+        }, 400)
+      }
+      
+      // Langsung kirim gambar ke groupId
+      const options: any = { sendSeen: false }
+      if (message) {
+        options.caption = message
+      }
+      
+      await whatsAppClient.sendMessage(groupId, media, options)
+      
+      return c.json({
+        success: true,
+        message: 'Group image sent successfully',
+        groupId: groupId
+      })
+    }
+
+    // Jika groupName diberikan, perlu getGroupChat untuk mendapatkan groupId
+    const groupChat = await getGroupChat(undefined, groupName)
 
     // Kirim gambar dengan message/caption (jika ada)
     const options: any = { sendSeen: false }

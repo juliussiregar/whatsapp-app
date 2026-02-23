@@ -20,6 +20,9 @@ const whatsAppClient = new Client({
   },
 });
 
+// Track client ready state
+let isClientReady = false
+
 interface MessageToSend {
   to: string;
   message: string;
@@ -42,7 +45,14 @@ async function init() {
 
   // When the client is ready, run this code (only once)
   whatsAppClient.once("ready", async () => {
+    isClientReady = true
     console.info("WhatsApp Client is ready!");
+  });
+  
+  // Track disconnection
+  whatsAppClient.on("disconnected", (reason) => {
+    isClientReady = false
+    console.warn("WhatsApp Client disconnected:", reason);
   });
 
   // When the client received QR-Code
@@ -72,4 +82,8 @@ async function init() {
   whatsAppClient.initialize();
 }
 
-export { whatsAppClient, init };
+function isReady(): boolean {
+  return isClientReady
+}
+
+export { whatsAppClient, init, isReady };
