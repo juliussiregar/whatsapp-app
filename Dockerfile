@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies (including dev dependencies for build)
-RUN npm ci
+RUN npm install
 
 # Copy source code
 COPY . .
@@ -46,8 +46,9 @@ ENV BROWSER_PATH=/usr/bin/chromium \
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files and lockfile from builder
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/package-lock.json ./package-lock.json
 
 # Install only production dependencies
 RUN npm ci --omit=dev

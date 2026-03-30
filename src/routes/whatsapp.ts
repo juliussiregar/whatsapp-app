@@ -1,26 +1,35 @@
-import { Hono } from 'hono'
-import { whatsAppClient, isReady } from '@/clients/whatsapp.js'
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
+import { whatsAppClient, isReady, reconnect, getStatus } from '@/clients/whatsapp.js'
 import whatsappWeb from 'whatsapp-web.js'
 import { promises as fs } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import {
+  ErrorSchema,
+  StatusSchema,
+  ReconnectResponseSchema,
+  SendMessageBodySchema,
+  SendMessageResponseSchema,
+  SendImageBodySchema,
+  SendImageResponseSchema,
+  GroupsResponseSchema,
+  SendGroupMessageBodySchema,
+  SendGroupMessageResponseSchema,
+  SendGroupImageBodySchema,
+  SendGroupImageResponseSchema,
+  LogoutResponseSchema,
+  AuthClearResponseSchema,
+  CacheClearResponseSchema,
+  ResetResponseSchema,
+} from '@/schemas/whatsapp.js'
+
 const { MessageMedia } = whatsappWeb
 const execAsync = promisify(exec)
 
-const whatsapp = new Hono()
+const whatsapp = new OpenAPIHono()
 
-// Endpoint untuk check status client
-whatsapp.get('/status', (c) => {
-  const ready = isReady()
-  return c.json({
-    ready,
-    message: ready 
-      ? 'WhatsApp client is ready to send messages' 
-      : 'WhatsApp client is not ready. Please wait for initialization and scan QR code if needed.'
-  })
-})
+// ── Helper functions ────────────────────────────────────────────────
 
-// Helper function untuk format nomor
 function formatPhoneNumber(phoneNumber: string): string {
   let formatted = phoneNumber.trim().replaceAll(/\D/g, '')
   if (formatted.startsWith('0')) {
@@ -31,34 +40,26 @@ function formatPhoneNumber(phoneNumber: string): string {
   return formatted
 }
 
-// Helper function untuk validasi dan mendapatkan contact
 async function getValidatedContact(formattedPhone: string) {
   const numberId = await whatsAppClient.getNumberId(formattedPhone)
   if (!numberId) {
     throw new Error(`Phone number ${formattedPhone} is not registered on WhatsApp`)
   }
-
   const contactId = numberId._serialized
   const contact = await whatsAppClient.getContactById(contactId)
-  
   if (!contact) {
     throw new Error(`Unable to get contact for ${formattedPhone}`)
   }
-
   return { contactId, contact }
 }
 
-// Helper function untuk mengirim pesan dengan error handling
 async function sendMessageSafely(contactId: string, content: any, options: any = {}) {
   const contact = await whatsAppClient.getContactById(contactId)
   if (!contact) {
     throw new Error('Contact not found')
   }
-
   let chat = await contact.getChat()
-  
   if (chat) {
-    // Chat sudah ada, verifikasi dulu
     const verifiedChat = await whatsAppClient.getChatById(chat.id._serialized)
     if (verifiedChat) {
       await verifiedChat.sendMessage(content, { ...options, sendSeen: false })
@@ -66,731 +67,662 @@ async function sendMessageSafely(contactId: string, content: any, options: any =
       await whatsAppClient.sendMessage(contactId, content, { ...options, sendSeen: false })
     }
   } else {
-    // Chat baru, gunakan client.sendMessage dengan sendSeen: false
     await whatsAppClient.sendMessage(contactId, content, { ...options, sendSeen: false })
   }
 }
 
-// Helper function untuk mendapatkan grup (by ID atau name)
 async function getGroupChat(groupId?: string, groupName?: string) {
   let groupChat: any = null
 
   if (groupId) {
     console.log(`Getting group by ID: ${groupId}`)
-    
-    // Coba getChatById dulu, tapi jika error, fallback ke getChats()
     try {
       groupChat = await whatsAppClient.getChatById(groupId)
-      
-      if (groupChat && groupChat.isGroup) {
-        return groupChat
-      }
-      
-      if (groupChat && !groupChat.isGroup) {
-        throw new Error(`Chat with ID ${groupId} is not a group`)
-      }
+      if (groupChat && groupChat.isGroup) return groupChat
+      if (groupChat && !groupChat.isGroup) throw new Error(`Chat with ID ${groupId} is not a group`)
     } catch (error) {
       console.warn(`getChatById failed for ${groupId}, trying getChats() fallback:`, error)
     }
-    
-    // Jika getChatById gagal, kita tidak bisa fallback ke getChats() karena bug
-    // Return error dan biarkan caller handle (biasanya akan langsung gunakan sendMessage dengan groupId)
     throw new Error(`Cannot get group with ID ${groupId}. Try using sendMessage directly with groupId instead.`)
   } else if (groupName) {
     console.log(`Searching for group by name: ${groupName}`)
-    
-    // Gunakan workaround yang sama seperti di endpoint /groups
     const pupPage = (whatsAppClient as any).pupPage
-    if (!pupPage) {
-      throw new Error('WhatsApp client page not available')
-    }
-    
+    if (!pupPage) throw new Error('WhatsApp client page not available')
+
     try {
-      // Akses langsung ke Store.Chat.getModelsArray() tanpa getChatModel
       const result = await pupPage.evaluate((searchName: string) => {
         try {
-          // @ts-ignore - window tersedia di browser context
+          // @ts-ignore
           const chats = window.Store.Chat.getModelsArray()
-          
           for (const chat of chats) {
             try {
-              // @ts-ignore - window tersedia di browser context
+              // @ts-ignore
               const store = window.Store
-              
-              // Cek apakah ini grup
               const hasGroupMetadata = chat.groupMetadata !== undefined && chat.groupMetadata !== null
               const isGroupId = typeof chat.id?.isGroup === 'function' ? chat.id.isGroup() : false
               const isGroupIdString = chat.id?._serialized?.endsWith('@g.us') || false
               const isNewsletter = store.ChatGetters?.getIsNewsletter?.(chat) || false
-              
               const isGroup = (hasGroupMetadata || isGroupId || isGroupIdString) && !isNewsletter
-              
               if (isGroup) {
                 const name = chat.name || chat.formattedTitle || chat.contact?.formattedName || ''
                 if (name.toLowerCase() === searchName.toLowerCase()) {
-                  return {
-                    id: chat.id?._serialized || chat.id?.user || chat.id,
-                    name: name
-                  }
+                  return { id: chat.id?._serialized || chat.id?.user || chat.id, name }
                 }
               }
-            } catch {
-              continue
-            }
+            } catch { continue }
           }
-          
           return null
-        } catch (error) {
-          throw error
-        }
+        } catch (error) { throw error }
       }, groupName)
-      
+
       if (!result || !result.id) {
         throw new Error(`Group with name "${groupName}" not found. Make sure the group name is correct and you're still in the group.`)
       }
-      
-      // Return group info dengan ID yang ditemukan
-      // Jangan gunakan getChatById karena bisa error, langsung return object sederhana
       return {
         id: { _serialized: result.id },
         name: result.name,
         isGroup: true,
-        // Method untuk sendMessage akan menggunakan client.sendMessage dengan ID
         sendMessage: async (content: any, options: any = {}) => {
           return await whatsAppClient.sendMessage(result.id, content, options)
-        }
+        },
       }
     } catch (error: any) {
-      const errorMessage = error?.message || String(error) || ''
-      throw new Error(`Failed to find group "${groupName}": ${errorMessage}`)
+      throw new Error(`Failed to find group "${groupName}": ${error?.message || String(error)}`)
     }
   }
-
   return groupChat
 }
 
-whatsapp.post('/send-message', async (c) => {
+// ── Routes ──────────────────────────────────────────────────────────
+
+// GET /status
+const statusRoute = createRoute({
+  method: 'get',
+  path: '/status',
+  tags: ['WhatsApp - Status'],
+  summary: 'Cek Status Client (Detail)',
+  description:
+    'Mengecek status detail WhatsApp client termasuk state, uptime, dan error terakhir. State: `initializing`, `waiting_qr`, `authenticated`, `loading`, `ready`, `disconnected`, `error`.',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: StatusSchema } },
+      description: 'Status detail client WhatsApp',
+    },
+  },
+})
+
+whatsapp.openapi(statusRoute, (c) => {
+  return c.json(getStatus(), 200)
+})
+
+// POST /reconnect
+const reconnectRoute = createRoute({
+  method: 'post',
+  path: '/reconnect',
+  tags: ['WhatsApp - Status'],
+  summary: 'Reconnect Client',
+  description:
+    'Menghancurkan client WhatsApp yang sedang berjalan dan membuat client baru tanpa perlu restart Docker container. Auto-reconnect juga aktif jika stuck di `authenticated` > 3 menit.',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ReconnectResponseSchema } },
+      description: 'Reconnect berhasil dimulai',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal reconnect',
+    },
+  },
+})
+
+whatsapp.openapi(reconnectRoute, async (c) => {
   try {
-    const { phoneNumber, message } = await c.req.json()
-
-    if (!phoneNumber || !message) {
-      return c.json({
-        success: false,
-        error: 'Phone number and message are required'
-      }, 400)
-    }
-
-    const formattedPhone = formatPhoneNumber(phoneNumber)
-    const { contactId } = await getValidatedContact(formattedPhone)
-    
-    await sendMessageSafely(contactId, message)
-
-    return c.json({
-      success: true,
-      message: 'Message sent successfully',
-      to: formattedPhone
-    })
+    console.log('Reconnect requested via API...')
+    await reconnect()
+    return c.json(
+      {
+        success: true,
+        message: 'WhatsApp client is reconnecting. Check /whatsapp/status for progress.',
+        note: 'If a QR code is needed, check Docker logs.',
+      },
+      200,
+    )
   } catch (error) {
-    console.error('Error sending WhatsApp message:', error)
-    
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    const errorStack = error instanceof Error ? error.stack : undefined
-
-    return c.json({
-      success: false,
-      error: 'Failed to send message',
-      details: errorMessage,
-      stack: errorStack
-    }, 500)
+    console.error('Error reconnecting:', error)
+    return c.json(
+      { success: false, error: 'Failed to reconnect', details: error instanceof Error ? error.message : String(error) },
+      500,
+    )
   }
 })
 
-// Endpoint untuk mengirim gambar
-whatsapp.post('/send-image', async (c) => {
+// POST /send-message
+const sendMessageRoute = createRoute({
+  method: 'post',
+  path: '/send-message',
+  tags: ['WhatsApp - Personal'],
+  summary: 'Kirim Pesan Teks',
+  description: 'Mengirim pesan teks ke nomor WhatsApp pribadi. Nomor akan divalidasi apakah terdaftar di WhatsApp sebelum dikirim.',
+  request: {
+    body: { content: { 'application/json': { schema: SendMessageBodySchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: SendMessageResponseSchema } },
+      description: 'Pesan berhasil dikirim',
+    },
+    400: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Request tidak valid',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal mengirim pesan',
+    },
+  },
+})
+
+whatsapp.openapi(sendMessageRoute, async (c) => {
   try {
-    const { phoneNumber, image, message } = await c.req.json()
-
-    if (!phoneNumber || !image) {
-      return c.json({
-        success: false,
-        error: 'Phone number and image are required',
-        details: 'Image can be a file path (local) or URL'
-      }, 400)
+    const { phoneNumber, message } = c.req.valid('json')
+    if (!phoneNumber || !message) {
+      return c.json({ success: false, error: 'Phone number and message are required' }, 400)
     }
+    const formattedPhone = formatPhoneNumber(phoneNumber)
+    const { contactId } = await getValidatedContact(formattedPhone)
+    await sendMessageSafely(contactId, message)
+    return c.json({ success: true, message: 'Message sent successfully', to: formattedPhone }, 200)
+  } catch (error) {
+    console.error('Error sending WhatsApp message:', error)
+    return c.json(
+      { success: false, error: 'Failed to send message', details: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined },
+      500,
+    )
+  }
+})
 
+// POST /send-image
+const sendImageRoute = createRoute({
+  method: 'post',
+  path: '/send-image',
+  tags: ['WhatsApp - Personal'],
+  summary: 'Kirim Gambar',
+  description: 'Mengirim gambar ke nomor WhatsApp pribadi. Gambar bisa berupa URL atau path file lokal di dalam container Docker.',
+  request: {
+    body: { content: { 'application/json': { schema: SendImageBodySchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: SendImageResponseSchema } },
+      description: 'Gambar berhasil dikirim',
+    },
+    400: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Request tidak valid',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal mengirim gambar',
+    },
+  },
+})
+
+whatsapp.openapi(sendImageRoute, async (c) => {
+  try {
+    const { phoneNumber, image, message } = c.req.valid('json')
+    if (!phoneNumber || !image) {
+      return c.json({ success: false, error: 'Phone number and image are required', details: 'Image can be a file path (local) or URL' }, 400)
+    }
     const formattedPhone = formatPhoneNumber(phoneNumber)
     const { contactId } = await getValidatedContact(formattedPhone)
 
-    // Buat MessageMedia dari file path atau URL
     let media: any
     if (image.startsWith('http://') || image.startsWith('https://')) {
-      // Dari URL
       console.log(`Loading image from URL: ${image}`)
       media = await MessageMedia.fromUrl(image)
     } else {
-      // Dari file path lokal
       console.log(`Loading image from file: ${image}`)
       media = MessageMedia.fromFilePath(image)
     }
 
-    // Kirim gambar dengan message/caption (jika ada)
     const options: any = { sendSeen: false }
-    if (message) {
-      options.caption = message
-    }
+    if (message) options.caption = message
 
     await sendMessageSafely(contactId, media, options)
-
-    return c.json({
-      success: true,
-      message: 'Image sent successfully',
-      to: formattedPhone,
-      caption: message || null
-    })
+    return c.json({ success: true, message: 'Image sent successfully', to: formattedPhone, caption: message || null }, 200)
   } catch (error) {
     console.error('Error sending WhatsApp image:', error)
-    
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    const errorStack = error instanceof Error ? error.stack : undefined
-
-    return c.json({
-      success: false,
-      error: 'Failed to send image',
-      details: errorMessage,
-      stack: errorStack
-    }, 500)
+    return c.json(
+      { success: false, error: 'Failed to send image', details: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined },
+      500,
+    )
   }
 })
 
-// Endpoint untuk mengirim pesan ke grup
-whatsapp.post('/send-group-message', async (c) => {
-  try {
-    const { groupId, groupName, message } = await c.req.json()
-
-    if (!message) {
-      return c.json({
-        success: false,
-        error: 'Message is required'
-      }, 400)
-    }
-
-    if (!groupId && !groupName) {
-      return c.json({
-        success: false,
-        error: 'Either groupId or groupName is required',
-        details: 'groupId format: 123456789@g.us or groupName: name of the group'
-      }, 400)
-    }
-
-    // Jika groupId diberikan, langsung gunakan sendMessage tanpa perlu getChatById
-    // Ini lebih aman dan menghindari error "Cannot read properties of undefined"
-    if (groupId) {
-      // Validasi format groupId
-      if (!groupId.includes('@g.us')) {
-        return c.json({
-          success: false,
-          error: 'Invalid group ID format',
-          details: 'Group ID must be in format: 123456789@g.us'
-        }, 400)
-      }
-      
-      // Langsung kirim pesan ke groupId
-      await whatsAppClient.sendMessage(groupId, message, { sendSeen: false })
-      
-      return c.json({
-        success: true,
-        message: 'Group message sent successfully',
-        groupId: groupId
-      })
-    }
-
-    // Jika groupName diberikan, perlu getChat untuk mendapatkan groupId
-    const groupChat = await getGroupChat(undefined, groupName)
-
-    // Kirim pesan ke grup
-    await groupChat.sendMessage(message, { sendSeen: false })
-
-    return c.json({
-      success: true,
-      message: 'Group message sent successfully',
-      groupId: groupChat.id._serialized,
-      groupName: groupChat.name || null
-    })
-  } catch (error) {
-    console.error('Error sending group message:', error)
-    
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    const errorStack = error instanceof Error ? error.stack : undefined
-
-    return c.json({
-      success: false,
-      error: 'Failed to send group message',
-      details: errorMessage,
-      stack: errorStack
-    }, 500)
-  }
+// GET /groups
+const groupsRoute = createRoute({
+  method: 'get',
+  path: '/groups',
+  tags: ['WhatsApp - Group'],
+  summary: 'Daftar Grup',
+  description: 'Mendapatkan daftar semua grup WhatsApp yang diikuti. Gunakan `id` dari response untuk endpoint send-group-message dan send-group-image.',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: GroupsResponseSchema } },
+      description: 'Daftar grup berhasil didapatkan',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal mendapatkan daftar grup',
+    },
+    503: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'WhatsApp client belum siap',
+    },
+  },
 })
 
-// Endpoint untuk mendapatkan daftar grup
-whatsapp.get('/groups', async (c) => {
+whatsapp.openapi(groupsRoute, async (c) => {
   try {
-    // Workaround: Gunakan evaluate langsung untuk akses Store.Chat tanpa getChatModel
-    // Ini menghindari bug "Cannot read properties of undefined (reading 'update')"
     let groups: any[] = []
     let retries = 3
     let lastError: any = null
-    
-    // Cek apakah pupPage tersedia
+
     const pupPage = (whatsAppClient as any).pupPage
     if (!pupPage) {
-      return c.json({
-        success: false,
-        error: 'WhatsApp client page not available',
-        details: 'The browser page is not initialized yet. Please wait for the client to be ready.'
-      }, 503)
+      return c.json(
+        { success: false, error: 'WhatsApp client page not available', details: 'The browser page is not initialized yet. Please wait for the client to be ready.' },
+        503,
+      )
     }
-    
+
     while (retries > 0) {
       try {
-        // Akses langsung ke Store.Chat.getModelsArray() dan filter sendiri
-        // Note: window akan tersedia di browser context saat evaluate
         const rawChats = await pupPage.evaluate(() => {
           try {
-            // @ts-ignore - window tersedia di browser context
+            // @ts-ignore
             const chats = window.Store.Chat.getModelsArray()
             const groups: any[] = []
             let totalChats = chats.length
             let groupCount = 0
-            
             for (const chat of chats) {
               try {
-                // @ts-ignore - window tersedia di browser context
+                // @ts-ignore
                 const store = window.Store
-                
-                // Cek apakah ini grup: ada groupMetadata atau id.isGroup() atau id berakhir dengan @g.us
                 const hasGroupMetadata = chat.groupMetadata !== undefined && chat.groupMetadata !== null
                 const isGroupId = typeof chat.id?.isGroup === 'function' ? chat.id.isGroup() : false
                 const isGroupIdString = chat.id?._serialized?.endsWith('@g.us') || false
                 const isNewsletter = store.ChatGetters?.getIsNewsletter?.(chat) || false
-                
-                // Ini grup jika ada groupMetadata atau isGroup() true, dan bukan newsletter
                 const isGroup = (hasGroupMetadata || isGroupId || isGroupIdString) && !isNewsletter
-                
                 if (isGroup) {
                   groupCount++
                   const chatId = chat.id?._serialized || chat.id?.user || chat.id
                   const name = chat.name || chat.formattedTitle || chat.contact?.formattedName || 'Unknown'
-                  
-                  // Get participants count dari groupMetadata jika ada
                   let participantsCount = 0
                   if (chat.groupMetadata && chat.groupMetadata.participants) {
                     const participants = chat.groupMetadata.participants
-                    if (participants._models) {
-                      participantsCount = participants._models.length
-                    } else if (Array.isArray(participants)) {
-                      participantsCount = participants.length
-                    }
+                    if (participants._models) participantsCount = participants._models.length
+                    else if (Array.isArray(participants)) participantsCount = participants.length
                   }
-                  
-                  groups.push({
-                    id: chatId,
-                    name: name,
-                    participantsCount: participantsCount
-                  })
+                  groups.push({ id: chatId, name, participantsCount })
                 }
-              } catch (err) {
-                // Skip chat yang error
-                continue
-              }
+              } catch { continue }
             }
-            
-            // Return dengan debug info
             return { groups, debug: { totalChats, groupCount } }
-          } catch (error) {
-            throw error
-          }
+          } catch (error) { throw error }
         })
-        
-        // Extract groups dari result
+
         if (rawChats && typeof rawChats === 'object' && 'groups' in rawChats) {
           groups = rawChats.groups || []
-          if (rawChats.debug) {
-            console.log(`Debug: Total chats: ${rawChats.debug.totalChats}, Groups found: ${rawChats.debug.groupCount}`)
-          }
+          if (rawChats.debug) console.log(`Debug: Total chats: ${rawChats.debug.totalChats}, Groups found: ${rawChats.debug.groupCount}`)
         } else {
-          // Fallback jika format berbeda
           groups = Array.isArray(rawChats) ? rawChats : []
         }
-        
-        groups = rawChats || []
         console.log(`Found ${groups.length} groups using direct Store.Chat access`)
-        break // Success
+        break
       } catch (error: any) {
         lastError = error
         retries--
-        
-        const errorMessage = error?.message || String(error) || ''
-        console.warn(`getChats() alternative method failed (attempt ${3 - retries}/3):`, errorMessage)
-        
-        if (retries > 0) {
-          await new Promise(resolve => setTimeout(resolve, 1500))
-        }
+        console.warn(`getChats() alternative method failed (attempt ${3 - retries}/3):`, error?.message || String(error))
+        if (retries > 0) await new Promise((resolve) => setTimeout(resolve, 1500))
       }
     }
-    
-    // Jika masih error, coba fallback ke getChats() biasa dengan error handling lebih baik
+
     if (groups.length === 0 && lastError) {
       console.log('Trying fallback to standard getChats() method...')
       try {
         const chats = await whatsAppClient.getChats()
         groups = chats
-          .filter((chat: any) => {
-            try {
-              return chat && chat.isGroup === true
-            } catch {
-              return false
-            }
-          })
-          .map((chat: any) => {
-            try {
-              return {
-                id: chat.id?._serialized || chat.id || 'unknown',
-                name: chat.name || 'Unknown',
-                participantsCount: chat.participants?.length || 0
-              }
-            } catch {
-              return null
-            }
-          })
+          .filter((chat: any) => { try { return chat && chat.isGroup === true } catch { return false } })
+          .map((chat: any) => { try { return { id: chat.id?._serialized || chat.id || 'unknown', name: chat.name || 'Unknown', participantsCount: chat.participants?.length || 0 } } catch { return null } })
           .filter((group: any) => group !== null)
-      } catch (fallbackError: any) {
-        const errorMessage = lastError?.message || String(lastError) || ''
-        
-        return c.json({
-          success: false,
-          error: 'Failed to get groups due to internal WhatsApp Web state issue',
-          details: errorMessage,
-          note: 'This is a known issue with whatsapp-web.js. The client is ready, but getChats() encountered an internal error. You can still send messages to groups using groupId directly via /whatsapp/send-group-message endpoint.',
-          suggestion: 'If you know the groupId (format: 123456789@g.us), you can use it directly without needing to list groups first.'
-        }, 500)
+      } catch {
+        return c.json(
+          {
+            success: false,
+            error: 'Failed to get groups due to internal WhatsApp Web state issue',
+            details: lastError?.message || String(lastError),
+          },
+          500,
+        )
       }
     }
 
-    return c.json({
-      success: true,
-      groups,
-      total: groups.length
-    })
+    return c.json({ success: true, groups, total: groups.length }, 200)
   } catch (error) {
     console.error('Error getting groups:', error)
-    
-    const errorMessage = error instanceof Error ? error.message : String(error)
-
-    return c.json({
-      success: false,
-      error: 'Failed to get groups',
-      details: errorMessage,
-      note: 'This might be a temporary issue. Please try again or check if WhatsApp client is ready.'
-    }, 500)
+    return c.json(
+      { success: false, error: 'Failed to get groups', details: error instanceof Error ? error.message : String(error) },
+      500,
+    )
   }
 })
 
-// Endpoint untuk mengirim gambar ke grup
-whatsapp.post('/send-group-image', async (c) => {
+// POST /send-group-message
+const sendGroupMessageRoute = createRoute({
+  method: 'post',
+  path: '/send-group-message',
+  tags: ['WhatsApp - Group'],
+  summary: 'Kirim Pesan ke Grup',
+  description: 'Mengirim pesan teks ke grup WhatsApp. Bisa menggunakan **groupId** (direkomendasikan) atau **groupName**.',
+  request: {
+    body: { content: { 'application/json': { schema: SendGroupMessageBodySchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: SendGroupMessageResponseSchema } },
+      description: 'Pesan berhasil dikirim ke grup',
+    },
+    400: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Request tidak valid',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal mengirim pesan ke grup',
+    },
+  },
+})
+
+whatsapp.openapi(sendGroupMessageRoute, async (c) => {
   try {
-    const { groupId, groupName, image, message } = await c.req.json()
-
-    if (!image) {
-      return c.json({
-        success: false,
-        error: 'Image is required',
-        details: 'Image can be a file path (local) or URL'
-      }, 400)
-    }
-
+    const { groupId, groupName, message } = c.req.valid('json')
+    if (!message) return c.json({ success: false, error: 'Message is required' }, 400)
     if (!groupId && !groupName) {
-      return c.json({
-        success: false,
-        error: 'Either groupId or groupName is required',
-        details: 'groupId format: 123456789@g.us or groupName: name of the group'
-      }, 400)
+      return c.json({ success: false, error: 'Either groupId or groupName is required', details: 'groupId format: 123456789@g.us or groupName: name of the group' }, 400)
     }
 
-    // Buat MessageMedia dari file path atau URL
+    if (groupId) {
+      if (!groupId.includes('@g.us')) {
+        return c.json({ success: false, error: 'Invalid group ID format', details: 'Group ID must be in format: 123456789@g.us' }, 400)
+      }
+      await whatsAppClient.sendMessage(groupId, message, { sendSeen: false })
+      return c.json({ success: true, message: 'Group message sent successfully', groupId }, 200)
+    }
+
+    const groupChat = await getGroupChat(undefined, groupName)
+    await groupChat.sendMessage(message, { sendSeen: false })
+    return c.json({ success: true, message: 'Group message sent successfully', groupId: groupChat.id._serialized, groupName: groupChat.name || null }, 200)
+  } catch (error) {
+    console.error('Error sending group message:', error)
+    return c.json(
+      { success: false, error: 'Failed to send group message', details: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined },
+      500,
+    )
+  }
+})
+
+// POST /send-group-image
+const sendGroupImageRoute = createRoute({
+  method: 'post',
+  path: '/send-group-image',
+  tags: ['WhatsApp - Group'],
+  summary: 'Kirim Gambar ke Grup',
+  description: 'Mengirim gambar ke grup WhatsApp. Gambar bisa berupa URL atau path file lokal. Bisa menggunakan **groupId** atau **groupName**.',
+  request: {
+    body: { content: { 'application/json': { schema: SendGroupImageBodySchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: SendGroupImageResponseSchema } },
+      description: 'Gambar berhasil dikirim ke grup',
+    },
+    400: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Request tidak valid',
+    },
+    404: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Grup tidak ditemukan',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal mengirim gambar ke grup',
+    },
+  },
+})
+
+whatsapp.openapi(sendGroupImageRoute, async (c) => {
+  try {
+    const { groupId, groupName, image, message } = c.req.valid('json')
+    if (!image) return c.json({ success: false, error: 'Image is required', details: 'Image can be a file path (local) or URL' }, 400)
+    if (!groupId && !groupName) {
+      return c.json({ success: false, error: 'Either groupId or groupName is required', details: 'groupId format: 123456789@g.us or groupName: name of the group' }, 400)
+    }
+
     let media: any
     if (image.startsWith('http://') || image.startsWith('https://')) {
-      // Dari URL
       console.log(`Loading image from URL: ${image}`)
       media = await MessageMedia.fromUrl(image)
     } else {
-      // Dari file path lokal
       console.log(`Loading image from file: ${image}`)
       media = MessageMedia.fromFilePath(image)
     }
 
-    // Jika groupId diberikan, langsung gunakan sendMessage tanpa perlu getGroupChat
-    // Ini lebih aman dan menghindari error "Cannot read properties of undefined"
     if (groupId) {
-      // Validasi format groupId
       if (!groupId.includes('@g.us')) {
-        return c.json({
-          success: false,
-          error: 'Invalid group ID format',
-          details: 'Group ID must be in format: 123456789@g.us'
-        }, 400)
+        return c.json({ success: false, error: 'Invalid group ID format', details: 'Group ID must be in format: 123456789@g.us' }, 400)
       }
-      
-      // Langsung kirim gambar ke groupId
       const options: any = { sendSeen: false }
-      if (message) {
-        options.caption = message
-      }
-      
+      if (message) options.caption = message
       await whatsAppClient.sendMessage(groupId, media, options)
-      
-      return c.json({
-        success: true,
-        message: 'Group image sent successfully',
-        groupId: groupId
-      })
+      return c.json({ success: true, message: 'Group image sent successfully', groupId }, 200)
     }
 
-    // Jika groupName diberikan, perlu getGroupChat untuk mendapatkan groupId
     const groupChat = await getGroupChat(undefined, groupName)
-
-    // Kirim gambar dengan message/caption (jika ada)
     const options: any = { sendSeen: false }
-    if (message) {
-      options.caption = message
-    }
-
+    if (message) options.caption = message
     await groupChat.sendMessage(media, options)
-
-    return c.json({
-      success: true,
-      message: 'Group image sent successfully',
-      groupId: groupChat.id._serialized,
-      groupName: groupChat.name || null,
-      caption: message || null
-    })
+    return c.json(
+      { success: true, message: 'Group image sent successfully', groupId: groupChat.id._serialized, groupName: groupChat.name || null, caption: message || null },
+      200,
+    )
   } catch (error) {
     console.error('Error sending group image:', error)
-    
     const errorMessage = error instanceof Error ? error.message : String(error)
-    const errorStack = error instanceof Error ? error.stack : undefined
-
-    // Handle specific errors
     if (errorMessage.includes('Group') && errorMessage.includes('not found')) {
-      return c.json({
-        success: false,
-        error: 'Group not found',
-        details: errorMessage
-      }, 404)
+      return c.json({ success: false, error: 'Group not found', details: errorMessage }, 404)
     }
-
     if (errorMessage.includes('not a group')) {
-      return c.json({
-        success: false,
-        error: 'Invalid group',
-        details: errorMessage
-      }, 400)
+      return c.json({ success: false, error: 'Invalid group', details: errorMessage }, 400)
     }
-
-    return c.json({
-      success: false,
-      error: 'Failed to send group image',
-      details: errorMessage,
-      stack: errorStack
-    }, 500)
+    return c.json(
+      { success: false, error: 'Failed to send group image', details: errorMessage, stack: error instanceof Error ? error.stack : undefined },
+      500,
+    )
   }
 })
 
-// Endpoint untuk logout dari WhatsApp
-whatsapp.post('/logout', async (c) => {
+// POST /logout
+const logoutRoute = createRoute({
+  method: 'post',
+  path: '/logout',
+  tags: ['WhatsApp - Management'],
+  summary: 'Logout dari WhatsApp',
+  description: '⚠️ **Hati-hati!** Endpoint ini akan logout dari WhatsApp dan menghancurkan session aktif. Setelah logout, Anda perlu scan QR code lagi.',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: LogoutResponseSchema } },
+      description: 'Logout berhasil',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal logout',
+    },
+  },
+})
+
+whatsapp.openapi(logoutRoute, async (c) => {
   try {
     console.log('Logging out from WhatsApp...')
-    
-    // Logout dan destroy client
     await whatsAppClient.logout()
     await whatsAppClient.destroy()
-    
-    // Clean up browser processes
     try {
       await execAsync('pkill -f "chromium.*wwebjs_auth" || true')
       console.info('Cleaned up browser processes')
-    } catch (error) {
-      console.info('No browser processes to clean up')
-    }
-
-    return c.json({
-      success: true,
-      message: 'Logged out successfully from WhatsApp'
-    })
+    } catch { console.info('No browser processes to clean up') }
+    return c.json({ success: true, message: 'Logged out successfully from WhatsApp' }, 200)
   } catch (error) {
     console.error('Error logging out:', error)
-    
-    const errorMessage = error instanceof Error ? error.message : String(error)
-
-    return c.json({
-      success: false,
-      error: 'Failed to logout',
-      details: errorMessage
-    }, 500)
+    return c.json({ success: false, error: 'Failed to logout', details: error instanceof Error ? error.message : String(error) }, 500)
   }
 })
 
-// Endpoint untuk menghapus auth data
-whatsapp.delete('/auth', async (c) => {
+// DELETE /auth
+const authRoute = createRoute({
+  method: 'delete',
+  path: '/auth',
+  tags: ['WhatsApp - Management'],
+  summary: 'Hapus Auth Data',
+  description: '⚠️ **Hati-hati!** Menghapus folder `.wwebjs_auth`. Setelah ini restart service dan scan QR code lagi.',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: AuthClearResponseSchema } },
+      description: 'Auth data berhasil dihapus',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal menghapus auth data',
+    },
+  },
+})
+
+whatsapp.openapi(authRoute, async (c) => {
   try {
     console.log('Clearing auth data...')
-    
     const authPath = './.wwebjs_auth'
-    
     try {
-      // Hapus folder auth
       await fs.rm(authPath, { recursive: true, force: true })
       console.info('Auth data cleared successfully')
-      
-      return c.json({
-        success: true,
-        message: 'Auth data cleared successfully',
-        note: 'Please restart the service to initialize new session'
-      })
+      return c.json({ success: true, message: 'Auth data cleared successfully', note: 'Please restart the service to initialize new session' }, 200)
     } catch (error: any) {
       if (error.code === 'ENOENT') {
-        // Folder tidak ada, sudah bersih
-        return c.json({
-          success: true,
-          message: 'Auth data already cleared or does not exist'
-        })
+        return c.json({ success: true, message: 'Auth data already cleared or does not exist' }, 200)
       }
       throw error
     }
   } catch (error) {
     console.error('Error clearing auth data:', error)
-    
-    const errorMessage = error instanceof Error ? error.message : String(error)
-
-    return c.json({
-      success: false,
-      error: 'Failed to clear auth data',
-      details: errorMessage
-    }, 500)
+    return c.json({ success: false, error: 'Failed to clear auth data', details: error instanceof Error ? error.message : String(error) }, 500)
   }
 })
 
-// Endpoint untuk menghapus cache data
-whatsapp.delete('/cache', async (c) => {
+// DELETE /cache
+const cacheRoute = createRoute({
+  method: 'delete',
+  path: '/cache',
+  tags: ['WhatsApp - Management'],
+  summary: 'Hapus Cache Data',
+  description: 'Menghapus folder `.wwebjs_cache`. Berguna untuk membebaskan ruang disk atau mengatasi masalah cache corrupt.',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: CacheClearResponseSchema } },
+      description: 'Cache data berhasil dihapus',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal menghapus cache',
+    },
+  },
+})
+
+whatsapp.openapi(cacheRoute, async (c) => {
   try {
     console.log('Clearing cache data...')
-    
     const cachePath = './.wwebjs_cache'
-    
     try {
-      // Hapus folder cache
       await fs.rm(cachePath, { recursive: true, force: true })
       console.info('Cache data cleared successfully')
-      
-      return c.json({
-        success: true,
-        message: 'Cache data cleared successfully'
-      })
+      return c.json({ success: true, message: 'Cache data cleared successfully' }, 200)
     } catch (error: any) {
       if (error.code === 'ENOENT') {
-        // Folder tidak ada, sudah bersih
-        return c.json({
-          success: true,
-          message: 'Cache data already cleared or does not exist'
-        })
+        return c.json({ success: true, message: 'Cache data already cleared or does not exist' }, 200)
       }
       throw error
     }
   } catch (error) {
     console.error('Error clearing cache data:', error)
-    
-    const errorMessage = error instanceof Error ? error.message : String(error)
-
-    return c.json({
-      success: false,
-      error: 'Failed to clear cache data',
-      details: errorMessage
-    }, 500)
+    return c.json({ success: false, error: 'Failed to clear cache data', details: error instanceof Error ? error.message : String(error) }, 500)
   }
 })
 
-// Endpoint untuk reset lengkap (logout + hapus auth + hapus cache)
-whatsapp.post('/reset', async (c) => {
+// POST /reset
+const resetRoute = createRoute({
+  method: 'post',
+  path: '/reset',
+  tags: ['WhatsApp - Management'],
+  summary: 'Reset Lengkap Service',
+  description: '⚠️ **Hati-hati!** Melakukan reset lengkap: logout + hapus auth + hapus cache. Setelah reset, **restart service** diperlukan.',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ResetResponseSchema } },
+      description: 'Reset berhasil',
+    },
+    500: {
+      content: { 'application/json': { schema: ErrorSchema } },
+      description: 'Gagal reset',
+    },
+  },
+})
+
+whatsapp.openapi(resetRoute, async (c) => {
   try {
     console.log('Resetting WhatsApp service (logout + clear auth + clear cache)...')
-    
-    const results = {
-      logout: false,
-      authCleared: false,
-      cacheCleared: false
-    }
+    const results = { logout: false, authCleared: false, cacheCleared: false }
 
     // 1. Logout
     try {
       await whatsAppClient.logout()
       await whatsAppClient.destroy()
-      
-      // Clean up browser processes
-      try {
-        await execAsync('pkill -f "chromium.*wwebjs_auth" || true')
-      } catch (error) {
-        // Ignore error
-      }
-      
+      try { await execAsync('pkill -f "chromium.*wwebjs_auth" || true') } catch {}
       results.logout = true
       console.info('Logged out successfully')
-    } catch (error) {
-      console.warn('Logout error (might already be logged out):', error)
-    }
+    } catch (error) { console.warn('Logout error (might already be logged out):', error) }
 
     // 2. Clear auth
-    const authPath = './.wwebjs_auth'
     try {
-      await fs.rm(authPath, { recursive: true, force: true })
+      await fs.rm('./.wwebjs_auth', { recursive: true, force: true })
       results.authCleared = true
       console.info('Auth data cleared')
     } catch (error: any) {
-      if (error.code !== 'ENOENT') {
-        console.warn('Error clearing auth:', error)
-      } else {
-        results.authCleared = true // Folder tidak ada = sudah bersih
-      }
+      if (error.code === 'ENOENT') results.authCleared = true
+      else console.warn('Error clearing auth:', error)
     }
 
     // 3. Clear cache
-    const cachePath = './.wwebjs_cache'
     try {
-      await fs.rm(cachePath, { recursive: true, force: true })
+      await fs.rm('./.wwebjs_cache', { recursive: true, force: true })
       results.cacheCleared = true
       console.info('Cache data cleared')
     } catch (error: any) {
-      if (error.code !== 'ENOENT') {
-        console.warn('Error clearing cache:', error)
-      } else {
-        results.cacheCleared = true // Folder tidak ada = sudah bersih
-      }
+      if (error.code === 'ENOENT') results.cacheCleared = true
+      else console.warn('Error clearing cache:', error)
     }
 
-    return c.json({
-      success: true,
-      message: 'WhatsApp service reset successfully',
-      results,
-      note: 'Please restart the service to initialize new session'
-    })
+    return c.json({ success: true, message: 'WhatsApp service reset successfully', results, note: 'Please restart the service to initialize new session' }, 200)
   } catch (error) {
     console.error('Error resetting service:', error)
-    
-    const errorMessage = error instanceof Error ? error.message : String(error)
-
-    return c.json({
-      success: false,
-      error: 'Failed to reset service',
-      details: errorMessage
-    }, 500)
+    return c.json({ success: false, error: 'Failed to reset service', details: error instanceof Error ? error.message : String(error) }, 500)
   }
 })
 
