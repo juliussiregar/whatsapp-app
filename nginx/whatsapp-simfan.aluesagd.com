@@ -1,6 +1,6 @@
 server {
 
-    server_name wa-api.aluesagd.com;
+    server_name whatsapp-simfan.aluesagd.com;
 
     # Batas upload request body
     client_max_body_size 20M;
