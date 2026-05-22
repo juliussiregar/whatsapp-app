@@ -47,7 +47,7 @@ PORT=3000
 npm run dev
 ```
 
-6. Scan the QR code displayed in the terminal with your WhatsApp mobile app
+6. Open **http://localhost:3000/app** to scan the QR code (or use the terminal/Docker logs)
 
 ### Docker Deployment
 
@@ -57,7 +57,8 @@ The easiest way to run this service is using Docker, which comes with Chromium p
 # Build and start the service
 docker-compose up -d
 
-# View logs to see the QR code (first time only)
+# Open dashboard (QR scan + send message) at http://localhost:3001/app
+# Or view logs for QR in terminal (first time only)
 docker-compose logs -f whatsapp-bot
 
 # Stop the service
@@ -223,14 +224,35 @@ docker run -p 3000:3000 \
 | `BROWSER_PATH` | Path to Chromium/Chrome executable | Auto-detected |
 | `NODE_ENV` | Environment (development/production) | `development` |
 
+## Web Dashboard (Phase 1)
+
+Buka **http://localhost:3000/app** (atau port Docker Anda, mis. `3001`) untuk:
+
+| Halaman | URL | Fungsi |
+|---------|-----|--------|
+| Koneksi | `/app` | QR code, status, reconnect & logout |
+| Grup | `/app/groups` | Daftar grup, riwayat pesan, kirim ke grup |
+| Pribadi | `/app/personal` | Daftar chat, riwayat pesan, balas chat |
+| Kirim cepat | `/app/send` | Kirim ke nomor baru tanpa buka riwayat |
+
+Menu navigasi di sidebar mengarah ke masing-masing halaman. Halaman chat otomatis mengarahkan ke `/app` jika WhatsApp belum **ready**.
+
+| Endpoint | Deskripsi |
+|----------|-----------|
+| `GET /whatsapp/qr` | QR login (data URL PNG) |
+| `GET /whatsapp/chats?type=group\|personal\|all` | Daftar chat |
+| `GET /whatsapp/messages?chatId=...&limit=50` | Riwayat pesan |
+| `GET /whatsapp/groups` | Daftar grup (ringkas) |
+| `POST /whatsapp/send-group-message` | Kirim ke grup |
+
 ## First Time Setup
 
 1. Start the service (locally or with Docker)
-2. Watch the console/logs for a QR code
+2. Buka `/app` di browser **atau** lihat QR di console/logs
 3. Open WhatsApp on your phone
 4. Go to **Settings** > **Linked Devices** > **Link a Device**
-5. Scan the QR code displayed in the terminal
-6. Wait for "WhatsApp Client is ready!" message
+5. Scan the QR code
+6. Wait for status **ready** on the dashboard
 7. Your session is now saved and will persist across restarts
 
 ## Troubleshooting

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Koneksi — WhatsApp Dashboard</title>
+    <link rel="stylesheet" href="/app/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="topbar__brand">
+          <span class="topbar__logo">WA</span>
+          <div>
+            <h1>WhatsApp Service</h1>
+            <p>Koneksi perangkat</p>
+          </div>
+        </div>
+        <div class="topbar__actions">
+          <span id="status-badge" class="badge">Memuat…</span>
+          <button id="btn-reconnect" type="button" class="btn btn--sm btn--ghost" hidden>Reconnect</button>
+          <button id="btn-logout" type="button" class="btn btn--sm btn--danger" hidden>Logout</button>
+        </div>
+      </header>
+
+      <div class="shell">
+        <nav class="sidebar-nav" aria-label="Menu utama">
+          <p class="sidebar-nav__label">Menu</p>
+          <a href="/app" class="sidebar-nav__link sidebar-nav__link--active">
+            <span class="sidebar-nav__icon">⚡</span> Koneksi
+          </a>
+          <a href="/app/groups" class="sidebar-nav__link">
+            <span class="sidebar-nav__icon">👥</span> Grup
+          </a>
+          <a href="/app/personal" class="sidebar-nav__link">
+            <span class="sidebar-nav__icon">💬</span> Pribadi
+          </a>
+          <a href="/app/send" class="sidebar-nav__link">
+            <span class="sidebar-nav__icon">✉️</span> Kirim cepat
+          </a>
+          <div class="sidebar-nav__divider"></div>
+          <details class="sidebar-nav__status" open>
+            <summary>Status</summary>
+            <dl class="meta meta--compact">
+              <div><dt>State</dt><dd id="meta-state">—</dd></div>
+              <div><dt>Uptime</dt><dd id="meta-uptime">—</dd></div>
+            </dl>
+            <p id="meta-message" class="hint hint--sm"></p>
+          </details>
+        </nav>
+
+        <main class="page-main page-main--connect">
+          <section id="panel-qr" class="connect-card" hidden>
+            <h2>Tautkan perangkat</h2>
+            <p class="hint">
+              WhatsApp → <strong>Pengaturan</strong> → <strong>Perangkat tertaut</strong> →
+              <strong>Tautkan perangkat</strong>, lalu scan QR.
+            </p>
+            <div class="qr-box">
+              <img id="qr-image" alt="QR Code" width="260" height="260" hidden />
+              <div id="qr-placeholder" class="qr-placeholder">
+                <div class="spinner"></div>
+                <p>Menunggu QR…</p>
+              </div>
+            </div>
+            <p id="qr-updated" class="hint hint--sm"></p>
+          </section>
+
+          <section id="panel-loading" class="connect-card connect-card--center">
+            <div class="spinner spinner--lg"></div>
+            <h2 id="loading-title">Menghubungkan…</h2>
+            <p id="loading-message" class="hint"></p>
+          </section>
+
+          <section id="panel-error" class="connect-card connect-card--error" hidden>
+            <h2>Koneksi bermasalah</h2>
+            <p id="error-message"></p>
+            <button id="btn-reconnect-error" type="button" class="btn btn--primary">Coba reconnect</button>
+          </section>
+
+          <section id="panel-ready-hint" class="connect-card connect-card--success" hidden>
+            <h2>Siap digunakan</h2>
+            <p class="hint">WhatsApp sudah terhubung. Anda akan dialihkan ke chat terakhir, atau pilih menu di bawah.</p>
+            <div class="connect-card__actions">
+              <a href="/app/groups" class="btn btn--primary">Buka Grup</a>
+              <a href="/app/personal" class="btn btn--ghost btn--dark">Chat Pribadi</a>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script type="module" src="/app/connect.js"></script>
+  </body>
+</html>

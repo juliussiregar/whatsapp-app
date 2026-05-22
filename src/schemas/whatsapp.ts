@@ -44,13 +44,32 @@ export const StatusSchema = z
   })
   .openapi('Status')
 
+// ── QR ──────────────────────────────────────────────────────────────
+
+export const QrResponseSchema = z
+  .object({
+    available: z.boolean().openapi({ example: true }),
+    dataUrl: z.string().nullable().openapi({
+      example: 'data:image/png;base64,...',
+      description: 'QR code sebagai data URL PNG (null jika tidak tersedia)',
+    }),
+    updatedAt: z.string().nullable().openapi({
+      example: '2025-06-15T10:30:00.000Z',
+      description: 'Waktu QR terakhir diperbarui',
+    }),
+    message: z.string().openapi({
+      example: 'Scan QR dengan WhatsApp di HP: Pengaturan → Perangkat Tertaut → Tautkan perangkat.',
+    }),
+  })
+  .openapi('QrResponse')
+
 // ── Reconnect ───────────────────────────────────────────────────────
 
 export const ReconnectResponseSchema = z
   .object({
     success: z.boolean().openapi({ example: true }),
     message: z.string().openapi({ example: 'WhatsApp client is reconnecting. Check /whatsapp/status for progress.' }),
-    note: z.string().optional().openapi({ example: 'If a QR code is needed, check Docker logs.' }),
+    note: z.string().optional().openapi({ example: 'If a QR code is needed, open /app in the browser.' }),
   })
   .openapi('ReconnectResponse')
 
@@ -116,6 +135,101 @@ export const GroupsResponseSchema = z
     total: z.number().openapi({ example: 3 }),
   })
   .openapi('GroupsResponse')
+
+// ── Chats & Messages ────────────────────────────────────────────────
+
+export const LastMessageSchema = z
+  .object({
+    body: z.string().openapi({ example: 'Halo, ada update?' }),
+    fromMe: z.boolean().openapi({ example: false }),
+    timestamp: z.number().openapi({ example: 1718445600 }),
+  })
+  .openapi('LastMessage')
+
+export const ChatItemSchema = z.object({
+  id: z.string().openapi({ example: '120363012345678901@g.us' }),
+  name: z.string().openapi({ example: 'Tim Project Alpha' }),
+  isGroup: z.boolean().openapi({ example: true }),
+  participantsCount: z.number().openapi({ example: 15 }),
+  unreadCount: z.number().openapi({ example: 2 }),
+  timestamp: z.number().nullable().openapi({ example: 1718445600 }),
+  lastMessage: LastMessageSchema.nullable(),
+})
+
+export const ChatsQuerySchema = z.object({
+  type: z
+    .enum(['all', 'personal', 'group'])
+    .optional()
+    .default('all')
+    .openapi({ example: 'group', description: 'Filter: all, personal, atau group' }),
+})
+
+export const ChatsResponseSchema = z
+  .object({
+    success: z.boolean().openapi({ example: true }),
+    chats: z.array(ChatItemSchema),
+    total: z.number().openapi({ example: 5 }),
+  })
+  .openapi('ChatsResponse')
+
+export const MessageItemSchema = z.object({
+  id: z.string().openapi({ example: 'true_6281234567890@c.us_ABC123' }),
+  body: z.string().openapi({ example: 'Halo!' }),
+  fromMe: z.boolean().openapi({ example: true }),
+  author: z.string().nullable().openapi({ example: '6289876543210@c.us' }),
+  timestamp: z.number().openapi({ example: 1718445600 }),
+  type: z.string().openapi({ example: 'chat' }),
+  hasMedia: z.boolean().openapi({ example: false }),
+  mimetype: z.string().nullable().openapi({ example: 'image/jpeg' }),
+  filename: z.string().nullable().openapi({ example: 'photo.jpg' }),
+})
+
+export const MessageMediaQuerySchema = z.object({
+  messageId: z.string().openapi({
+    example: 'true_6281234567890@c.us_ABC123',
+    description: 'ID pesan dari GET /messages',
+  }),
+})
+
+export const MessageMediaResponseSchema = z
+  .object({
+    success: z.boolean(),
+    messageId: z.string().optional(),
+    mimetype: z.string().nullable().optional(),
+    filename: z.string().nullable().optional(),
+    filesize: z.number().nullable().optional(),
+    type: z.string().nullable().optional(),
+    dataUrl: z.string().nullable().optional(),
+    error: z.string().optional(),
+    details: z.string().optional(),
+  })
+  .openapi('MessageMediaResponse')
+
+export const MessagesQuerySchema = z.object({
+  chatId: z.string().openapi({
+    example: '120363012345678901@g.us',
+    description: 'ID chat (format @g.us untuk grup, @c.us untuk pribadi)',
+  }),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .default(100)
+    .openapi({ example: 100, description: 'Jumlah pesan terbaru (maks 500)' }),
+})
+
+export const MessagesResponseSchema = z
+  .object({
+    success: z.boolean().openapi({ example: true }),
+    chatId: z.string(),
+    chatName: z.string().nullable(),
+    isGroup: z.boolean(),
+    messages: z.array(MessageItemSchema),
+    total: z.number().openapi({ example: 25 }),
+  })
+  .openapi('MessagesResponse')
 
 // ── Send Group Message ──────────────────────────────────────────────
 

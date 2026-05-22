@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import { Client } from "whatsapp-web.js";
 import qrCode from "qrcode-terminal";
+import QRCode from "qrcode";
 
 const AUTH_DIR = "./.wwebjs_auth";
 
@@ -19,6 +20,18 @@ let stateChangedAt: Date = new Date();
 let lastError: string | null = null;
 let initStartedAt: Date = new Date();
 let autoReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let latestQr: string | null = null;
+let qrUpdatedAt: Date | null = null;
+
+function clearQr() {
+  latestQr = null;
+  qrUpdatedAt = null;
+}
+
+async function setQr(qr: string) {
+  latestQr = qr;
+  qrUpdatedAt = new Date();
+}
 
 // Berapa lama (ms) setelah authenticated tapi belum ready → auto-reconnect
 const AUTO_RECONNECT_TIMEOUT_MS = 3 * 60 * 1000; // 3 menit
@@ -118,6 +131,7 @@ function startAutoReconnectTimer() {
 function attachListeners(client: Client) {
   client.once("ready", () => {
     clearAutoReconnectTimer();
+    clearQr();
     setState("ready");
     console.info("WhatsApp Client is ready!");
   });
@@ -129,11 +143,15 @@ function attachListeners(client: Client) {
   });
 
   client.on("loading_screen", (percent, message) => {
+    // Jangan turunkan state setelah ready — event ini bisa fire ulang saat sync
+    if (clientState === "ready") return;
     setState("loading");
     console.info(`Loading WhatsApp Web: ${percent}% — ${message}`);
   });
 
   client.on("authenticated", () => {
+    if (clientState === "ready") return;
+    clearQr();
     setState("authenticated");
     console.info("WhatsApp authenticated! Waiting for ready...");
     // Mulai timer: jika dalam 3 menit tidak ready, auto-reconnect
@@ -148,6 +166,7 @@ function attachListeners(client: Client) {
 
   client.on("qr", (qr) => {
     setState("waiting_qr");
+    void setQr(qr);
     console.info("QR Code received, generating...");
     qrCode.generate(qr, { small: true });
   });
@@ -184,10 +203,41 @@ async function init() {
   whatsAppClient.initialize();
 }
 
+/** Logout dari WhatsApp, lalu inisialisasi client baru (perlu scan QR lagi) */
+async function logoutSession(): Promise<void> {
+  console.info("[WA Logout] Starting logout...");
+  clearAutoReconnectTimer();
+  clearQr();
+
+  try {
+    await whatsAppClient.logout();
+    console.info("[WA Logout] Logged out from WhatsApp");
+  } catch (err) {
+    console.warn("[WA Logout] logout() failed (ignored):", err);
+  }
+
+  try {
+    await whatsAppClient.destroy();
+    console.info("[WA Logout] Client destroyed");
+  } catch (err) {
+    console.warn("[WA Logout] destroy() failed (ignored):", err);
+  }
+
+  await removeLockFiles();
+
+  whatsAppClient = createClient();
+  setState("initializing");
+  initStartedAt = new Date();
+  attachListeners(whatsAppClient);
+  whatsAppClient.initialize();
+  console.info("[WA Logout] New client initializing — scan QR at /app");
+}
+
 /** Destroy client lama dan buat + initialize ulang (tanpa restart container) */
 async function reconnect(): Promise<void> {
   console.info("[WA Reconnect] Starting reconnect...");
   clearAutoReconnectTimer();
+  clearQr();
 
   // 1. Destroy client lama (best-effort)
   try {
@@ -231,7 +281,7 @@ function getStatus(): ClientStatus {
     initializing:
       "WhatsApp client is initializing. Please wait...",
     waiting_qr:
-      "QR code generated. Please scan the QR code from Docker logs to connect.",
+      "QR code generated. Scan via the web dashboard at /app or Docker logs.",
     authenticated:
       "WhatsApp authenticated, loading WhatsApp Web. Please wait...",
     loading:
@@ -254,5 +304,38 @@ function getStatus(): ClientStatus {
   };
 }
 
-export { whatsAppClient, init, reconnect, isReady, getStatus };
-export type { ClientState, ClientStatus };
+interface QrInfo {
+  available: boolean;
+  dataUrl: string | null;
+  updatedAt: string | null;
+  message: string;
+}
+
+async function getQr(): Promise<QrInfo> {
+  if (clientState !== "waiting_qr" || !latestQr) {
+    return {
+      available: false,
+      dataUrl: null,
+      updatedAt: qrUpdatedAt?.toISOString() ?? null,
+      message:
+        clientState === "waiting_qr"
+          ? "Menunggu QR dari WhatsApp. Coba refresh dalam beberapa detik."
+          : "QR tidak tersedia. Status saat ini tidak memerlukan scan.",
+    };
+  }
+
+  const dataUrl = await QRCode.toDataURL(latestQr, {
+    margin: 2,
+    width: 280,
+  });
+
+  return {
+    available: true,
+    dataUrl,
+    updatedAt: qrUpdatedAt?.toISOString() ?? null,
+    message: "Scan QR dengan WhatsApp di HP: Pengaturan → Perangkat Tertaut → Tautkan perangkat.",
+  };
+}
+
+export { whatsAppClient, init, reconnect, logoutSession, isReady, getStatus, getQr };
+export type { ClientState, ClientStatus, QrInfo };

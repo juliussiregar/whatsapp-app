@@ -1,9 +1,15 @@
+import path from "path";
+import { fileURLToPath } from "url";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { swaggerUI } from "@hono/swagger-ui";
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import health from "@/routes/health.js";
 import whatsapp from "@/routes/whatsapp.js";
 import { init as initWhatsApp } from "@/clients/whatsapp.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.join(__dirname, "..", "public");
 
 const app = new OpenAPIHono();
 
@@ -11,13 +17,21 @@ const app = new OpenAPIHono();
 app.route("/health", health);
 app.route("/whatsapp", whatsapp);
 
+app.get("/app", serveStatic({ root: publicDir, path: "index.html" }));
+app.get("/app/groups", serveStatic({ root: publicDir, path: "groups.html" }));
+app.get("/app/personal", serveStatic({ root: publicDir, path: "personal.html" }));
+app.get("/app/send", serveStatic({ root: publicDir, path: "send.html" }));
+app.use(
+  "/app/*",
+  serveStatic({
+    root: publicDir,
+    rewriteRequestPath: (p) => p.replace(/^\/app/, "") || "/",
+  }),
+);
+
 // Root endpoint
 app.get("/", (c) => {
-  return c.json({
-    message: "Welcome to Simple WhatsApp API",
-    version: "1.0.0",
-    docs: "/docs",
-  });
+  return c.redirect("/app", 302);
 });
 
 // Auto-generate OpenAPI JSON spec
@@ -29,8 +43,8 @@ app.doc("/doc", {
     description: `REST API untuk mengirim pesan WhatsApp menggunakan whatsapp-web.js.
 
 ## Cara Penggunaan
-1. Pastikan status client sudah **ready** dengan mengecek endpoint \`GET /whatsapp/status\`
-2. Scan QR code yang muncul di console/log Docker saat pertama kali menjalankan service
+1. Buka dashboard web di \`/app\` untuk scan QR dan kirim pesan
+2. Pastikan status client sudah **ready** dengan mengecek endpoint \`GET /whatsapp/status\`
 3. Setelah ready, Anda bisa mulai mengirim pesan
 
 ## Format Nomor Telepon
@@ -46,7 +60,7 @@ Gunakan endpoint \`GET /whatsapp/groups\` untuk mendapatkan daftar group ID.`,
     { name: "Health", description: "Health check service" },
     { name: "WhatsApp - Status", description: "Status dan manajemen koneksi WhatsApp" },
     { name: "WhatsApp - Personal", description: "Kirim pesan ke nomor pribadi" },
-    { name: "WhatsApp - Group", description: "Kirim pesan ke grup WhatsApp" },
+    { name: "WhatsApp - Group", description: "Grup, chat, riwayat pesan, dan kirim ke grup" },
     { name: "WhatsApp - Management", description: "Manajemen session, auth, dan cache" },
   ],
 });
@@ -69,6 +83,7 @@ serve(
   },
   (info) => {
     console.log(`Server is running on http://localhost:${info.port}`);
+    console.log(`Dashboard: http://localhost:${info.port}/app`);
     console.log(`Swagger UI: http://localhost:${info.port}/docs`);
   },
 );

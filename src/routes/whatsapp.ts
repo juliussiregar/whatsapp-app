@@ -1,5 +1,10 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
-import { whatsAppClient, isReady, reconnect, getStatus } from '@/clients/whatsapp.js'
+import { whatsAppClient, isReady, reconnect, logoutSession, getStatus, getQr } from '@/clients/whatsapp.js'
+import {
+  fetchChatsFromStore,
+  fetchMessagesFromStore,
+  downloadMessageMediaFromStore,
+} from '@/utils/whatsapp-store.js'
 import whatsappWeb from 'whatsapp-web.js'
 import { promises as fs } from 'fs'
 import { exec } from 'child_process'
@@ -7,12 +12,19 @@ import { promisify } from 'util'
 import {
   ErrorSchema,
   StatusSchema,
+  QrResponseSchema,
   ReconnectResponseSchema,
   SendMessageBodySchema,
   SendMessageResponseSchema,
   SendImageBodySchema,
   SendImageResponseSchema,
   GroupsResponseSchema,
+  ChatsQuerySchema,
+  ChatsResponseSchema,
+  MessagesQuerySchema,
+  MessagesResponseSchema,
+  MessageMediaQuerySchema,
+  MessageMediaResponseSchema,
   SendGroupMessageBodySchema,
   SendGroupMessageResponseSchema,
   SendGroupImageBodySchema,
@@ -133,6 +145,17 @@ async function getGroupChat(groupId?: string, groupName?: string) {
   return groupChat
 }
 
+function notReadyResponse(c: any) {
+  return c.json(
+    {
+      success: false,
+      error: 'WhatsApp client is not ready',
+      details: 'Wait until status is ready before using this endpoint.',
+    },
+    503,
+  )
+}
+
 // ── Routes ──────────────────────────────────────────────────────────
 
 // GET /status
@@ -153,6 +176,27 @@ const statusRoute = createRoute({
 
 whatsapp.openapi(statusRoute, (c) => {
   return c.json(getStatus(), 200)
+})
+
+// GET /qr
+const qrRoute = createRoute({
+  method: 'get',
+  path: '/qr',
+  tags: ['WhatsApp - Status'],
+  summary: 'Ambil QR Code untuk Login',
+  description:
+    'Mengembalikan QR code sebagai data URL PNG saat client dalam state `waiting_qr`. QR diperbarui otomatis oleh WhatsApp setiap ~20 detik — polling disarankan.',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: QrResponseSchema } },
+      description: 'QR code atau penjelasan jika belum tersedia',
+    },
+  },
+})
+
+whatsapp.openapi(qrRoute, async (c) => {
+  const qr = await getQr()
+  return c.json(qr, 200)
 })
 
 // POST /reconnect
@@ -183,7 +227,7 @@ whatsapp.openapi(reconnectRoute, async (c) => {
       {
         success: true,
         message: 'WhatsApp client is reconnecting. Check /whatsapp/status for progress.',
-        note: 'If a QR code is needed, check Docker logs.',
+        note: 'If a QR code is needed, open /app in the browser.',
       },
       200,
     )
@@ -324,95 +368,176 @@ const groupsRoute = createRoute({
 
 whatsapp.openapi(groupsRoute, async (c) => {
   try {
-    let groups: any[] = []
-    let retries = 3
-    let lastError: any = null
-
-    const pupPage = (whatsAppClient as any).pupPage
-    if (!pupPage) {
-      return c.json(
-        { success: false, error: 'WhatsApp client page not available', details: 'The browser page is not initialized yet. Please wait for the client to be ready.' },
-        503,
-      )
-    }
-
-    while (retries > 0) {
-      try {
-        const rawChats = await pupPage.evaluate(() => {
-          try {
-            // @ts-ignore
-            const chats = window.Store.Chat.getModelsArray()
-            const groups: any[] = []
-            let totalChats = chats.length
-            let groupCount = 0
-            for (const chat of chats) {
-              try {
-                // @ts-ignore
-                const store = window.Store
-                const hasGroupMetadata = chat.groupMetadata !== undefined && chat.groupMetadata !== null
-                const isGroupId = typeof chat.id?.isGroup === 'function' ? chat.id.isGroup() : false
-                const isGroupIdString = chat.id?._serialized?.endsWith('@g.us') || false
-                const isNewsletter = store.ChatGetters?.getIsNewsletter?.(chat) || false
-                const isGroup = (hasGroupMetadata || isGroupId || isGroupIdString) && !isNewsletter
-                if (isGroup) {
-                  groupCount++
-                  const chatId = chat.id?._serialized || chat.id?.user || chat.id
-                  const name = chat.name || chat.formattedTitle || chat.contact?.formattedName || 'Unknown'
-                  let participantsCount = 0
-                  if (chat.groupMetadata && chat.groupMetadata.participants) {
-                    const participants = chat.groupMetadata.participants
-                    if (participants._models) participantsCount = participants._models.length
-                    else if (Array.isArray(participants)) participantsCount = participants.length
-                  }
-                  groups.push({ id: chatId, name, participantsCount })
-                }
-              } catch { continue }
-            }
-            return { groups, debug: { totalChats, groupCount } }
-          } catch (error) { throw error }
-        })
-
-        if (rawChats && typeof rawChats === 'object' && 'groups' in rawChats) {
-          groups = rawChats.groups || []
-          if (rawChats.debug) console.log(`Debug: Total chats: ${rawChats.debug.totalChats}, Groups found: ${rawChats.debug.groupCount}`)
-        } else {
-          groups = Array.isArray(rawChats) ? rawChats : []
-        }
-        console.log(`Found ${groups.length} groups using direct Store.Chat access`)
-        break
-      } catch (error: any) {
-        lastError = error
-        retries--
-        console.warn(`getChats() alternative method failed (attempt ${3 - retries}/3):`, error?.message || String(error))
-        if (retries > 0) await new Promise((resolve) => setTimeout(resolve, 1500))
-      }
-    }
-
-    if (groups.length === 0 && lastError) {
-      console.log('Trying fallback to standard getChats() method...')
-      try {
-        const chats = await whatsAppClient.getChats()
-        groups = chats
-          .filter((chat: any) => { try { return chat && chat.isGroup === true } catch { return false } })
-          .map((chat: any) => { try { return { id: chat.id?._serialized || chat.id || 'unknown', name: chat.name || 'Unknown', participantsCount: chat.participants?.length || 0 } } catch { return null } })
-          .filter((group: any) => group !== null)
-      } catch {
-        return c.json(
-          {
-            success: false,
-            error: 'Failed to get groups due to internal WhatsApp Web state issue',
-            details: lastError?.message || String(lastError),
-          },
-          500,
-        )
-      }
-    }
-
+    if (!isReady()) return notReadyResponse(c)
+    const chats = await fetchChatsFromStore('group')
+    const groups = chats.map((g) => ({
+      id: g.id,
+      name: g.name,
+      participantsCount: g.participantsCount,
+    }))
     return c.json({ success: true, groups, total: groups.length }, 200)
   } catch (error) {
     console.error('Error getting groups:', error)
     return c.json(
       { success: false, error: 'Failed to get groups', details: error instanceof Error ? error.message : String(error) },
+      500,
+    )
+  }
+})
+
+// GET /chats
+const chatsRoute = createRoute({
+  method: 'get',
+  path: '/chats',
+  tags: ['WhatsApp - Group'],
+  summary: 'Daftar Chat',
+  description:
+    'Mendapatkan daftar chat WhatsApp (grup dan/atau pribadi). Gunakan `type=group` atau `type=personal` untuk filter.',
+  request: { query: ChatsQuerySchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ChatsResponseSchema } },
+      description: 'Daftar chat',
+    },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Gagal' },
+    503: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Belum ready' },
+  },
+})
+
+whatsapp.openapi(chatsRoute, async (c) => {
+  try {
+    if (!isReady()) return notReadyResponse(c)
+    const { type } = c.req.valid('query')
+    const chats = await fetchChatsFromStore(type)
+    return c.json({ success: true, chats, total: chats.length }, 200)
+  } catch (error) {
+    console.error('Error getting chats:', error)
+    return c.json(
+      { success: false, error: 'Failed to get chats', details: error instanceof Error ? error.message : String(error) },
+      500,
+    )
+  }
+})
+
+// GET /messages
+const messagesRoute = createRoute({
+  method: 'get',
+  path: '/messages',
+  tags: ['WhatsApp - Group'],
+  summary: 'Riwayat Pesan Chat',
+  description: 'Mengambil pesan terbaru dari chat tertentu berdasarkan `chatId`.',
+  request: { query: MessagesQuerySchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: MessagesResponseSchema } },
+      description: 'Riwayat pesan',
+    },
+    400: { content: { 'application/json': { schema: ErrorSchema } }, description: 'chatId wajib' },
+    404: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Chat tidak ditemukan' },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Gagal' },
+    503: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Belum ready' },
+  },
+})
+
+whatsapp.openapi(messagesRoute, async (c) => {
+  try {
+    if (!isReady()) return notReadyResponse(c)
+    const { chatId, limit } = c.req.valid('query')
+
+    const result = await fetchMessagesFromStore(chatId, limit)
+
+    if (!result.ok) {
+      return c.json(
+        {
+          success: false,
+          error: 'Chat not found',
+          details: `No chat with id ${chatId}. Buka chat tersebut di WhatsApp HP lalu coba lagi.`,
+        },
+        404,
+      )
+    }
+
+    const messages = [...result.messages].sort((a, b) => a.timestamp - b.timestamp)
+
+    return c.json(
+      {
+        success: true,
+        chatId,
+        chatName: result.chatName,
+        isGroup: result.isGroup,
+        messages,
+        total: messages.length,
+      },
+      200,
+    )
+  } catch (error) {
+    console.error('Error getting messages:', error)
+    return c.json(
+      { success: false, error: 'Failed to get messages', details: error instanceof Error ? error.message : String(error) },
+      500,
+    )
+  }
+})
+
+// GET /message-media
+const messageMediaRoute = createRoute({
+  method: 'get',
+  path: '/message-media',
+  tags: ['WhatsApp - Group'],
+  summary: 'Unduh Media Pesan',
+  description:
+    'Mengunduh gambar, video, audio, dokumen, atau stiker untuk satu pesan. Gunakan `messageId` dari GET /messages.',
+  request: { query: MessageMediaQuerySchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: MessageMediaResponseSchema } },
+      description: 'Media sebagai data URL',
+    },
+    404: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Pesan/media tidak ditemukan' },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Gagal unduh' },
+    503: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Belum ready' },
+  },
+})
+
+whatsapp.openapi(messageMediaRoute, async (c) => {
+  try {
+    if (!isReady()) return notReadyResponse(c)
+    const { messageId } = c.req.valid('query')
+
+    const result = await downloadMessageMediaFromStore(messageId)
+
+    if (!result.ok) {
+      return c.json(
+        {
+          success: false,
+          error: result.error || 'Media not available',
+          details: result.error,
+          messageId,
+        },
+        404,
+      )
+    }
+
+    return c.json(
+      {
+        success: true,
+        messageId,
+        mimetype: result.mimetype ?? null,
+        filename: result.filename ?? null,
+        filesize: result.filesize ?? null,
+        type: result.type ?? null,
+        dataUrl: result.dataUrl ?? null,
+      },
+      200,
+    )
+  } catch (error) {
+    console.error('Error downloading message media:', error)
+    return c.json(
+      {
+        success: false,
+        error: 'Failed to download media',
+        details: error instanceof Error ? error.message : String(error),
+      },
       500,
     )
   }
@@ -575,16 +700,26 @@ const logoutRoute = createRoute({
 whatsapp.openapi(logoutRoute, async (c) => {
   try {
     console.log('Logging out from WhatsApp...')
-    await whatsAppClient.logout()
-    await whatsAppClient.destroy()
+    await logoutSession()
     try {
       await execAsync('pkill -f "chromium.*wwebjs_auth" || true')
       console.info('Cleaned up browser processes')
-    } catch { console.info('No browser processes to clean up') }
-    return c.json({ success: true, message: 'Logged out successfully from WhatsApp' }, 200)
+    } catch {
+      console.info('No browser processes to clean up')
+    }
+    return c.json(
+      {
+        success: true,
+        message: 'Logged out successfully. Scan QR again at /app to reconnect.',
+      },
+      200,
+    )
   } catch (error) {
     console.error('Error logging out:', error)
-    return c.json({ success: false, error: 'Failed to logout', details: error instanceof Error ? error.message : String(error) }, 500)
+    return c.json(
+      { success: false, error: 'Failed to logout', details: error instanceof Error ? error.message : String(error) },
+      500,
+    )
   }
 })
 

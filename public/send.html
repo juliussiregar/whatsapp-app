@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kirim cepat — WhatsApp Dashboard</title>
+    <link rel="stylesheet" href="/app/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="topbar__brand">
+          <span class="topbar__logo">WA</span>
+          <div>
+            <h1>Kirim Cepat</h1>
+            <p>Tanpa buka riwayat chat</p>
+          </div>
+        </div>
+        <div class="topbar__actions">
+          <span id="status-badge" class="badge">Memuat…</span>
+          <button id="btn-reconnect" type="button" class="btn btn--sm btn--ghost" hidden>Reconnect</button>
+          <button id="btn-logout" type="button" class="btn btn--sm btn--danger" hidden>Logout</button>
+        </div>
+      </header>
+
+      <div class="shell">
+        <nav class="sidebar-nav" aria-label="Menu utama">
+          <p class="sidebar-nav__label">Menu</p>
+          <a href="/app" class="sidebar-nav__link"><span class="sidebar-nav__icon">⚡</span> Koneksi</a>
+          <a href="/app/groups" class="sidebar-nav__link"><span class="sidebar-nav__icon">👥</span> Grup</a>
+          <a href="/app/personal" class="sidebar-nav__link"><span class="sidebar-nav__icon">💬</span> Pribadi</a>
+          <a href="/app/send" class="sidebar-nav__link sidebar-nav__link--active"><span class="sidebar-nav__icon">✉️</span> Kirim cepat</a>
+        </nav>
+
+        <main class="page-main page-main--send">
+          <div class="send-card">
+            <h2>Kirim ke nomor baru</h2>
+            <p class="hint">
+              Berguna untuk notifikasi atau pesan sekali. Format nomor: <code>08xx</code> atau <code>628xx</code>.
+            </p>
+            <form id="form-quick-send" class="form-stack">
+              <label class="field">
+                <span>Nomor WhatsApp</span>
+                <input type="tel" id="input-phone" list="recent-phones" placeholder="08xxxxxxxxxx" required autocomplete="tel" />
+                <datalist id="recent-phones"></datalist>
+              </label>
+              <label class="field">
+                <span>Pesan</span>
+                <textarea id="input-quick-msg" rows="5" placeholder="Tulis pesan…" required></textarea>
+              </label>
+              <button type="submit" class="btn btn--primary btn--block" id="btn-quick-send">Kirim pesan</button>
+              <p id="quick-feedback" class="feedback" hidden></p>
+            </form>
+          </div>
+        </main>
+      </div>
+    </div>
+    <script type="module" src="/app/send.js"></script>
+  </body>
+</html>
