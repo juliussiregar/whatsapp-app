@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kelola grup — WhatsApp Dashboard</title>
+    <link rel="stylesheet" href="/app/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="topbar__brand">
+          <span class="topbar__logo">WA</span>
+          <div>
+            <h1>Kelola Grup</h1>
+            <p>Buat grup baru atau undang anggota</p>
+          </div>
+        </div>
+        <div class="topbar__actions">
+          <span id="status-badge" class="badge">Memuat…</span>
+          <button id="btn-reconnect" type="button" class="btn btn--sm btn--ghost" hidden>Reconnect</button>
+          <button id="btn-logout" type="button" class="btn btn--sm btn--danger" hidden>Logout</button>
+        </div>
+      </header>
+
+      <div class="shell">
+        <nav class="sidebar-nav" aria-label="Menu utama">
+          <p class="sidebar-nav__label">Menu</p>
+          <a href="/app" class="sidebar-nav__link"><span class="sidebar-nav__icon">⚡</span> Koneksi</a>
+          <a href="/app/groups" class="sidebar-nav__link"><span class="sidebar-nav__icon">👥</span> Grup</a>
+          <a href="/app/group-manage" class="sidebar-nav__link sidebar-nav__link--active"><span class="sidebar-nav__icon">➕</span> Kelola grup</a>
+          <a href="/app/personal" class="sidebar-nav__link"><span class="sidebar-nav__icon">💬</span> Pribadi</a>
+          <a href="/app/send" class="sidebar-nav__link"><span class="sidebar-nav__icon">✉️</span> Kirim cepat</a>
+        </nav>
+
+        <main class="page-main page-main--send">
+          <div class="send-card">
+            <h2>Buat grup baru</h2>
+            <p class="hint">
+              Satu nomor per baris atau dipisah koma. Maksimal 50 nomor. Format: <code>08xx</code> atau <code>628xx</code>.
+            </p>
+            <form id="form-create-group" class="form-stack">
+              <label class="field">
+                <span>Nama grup</span>
+                <input type="text" id="input-group-name" placeholder="Tim Project Alpha" required maxlength="100" />
+              </label>
+              <label class="field">
+                <span>Daftar nomor</span>
+                <textarea id="input-create-phones" rows="6" placeholder="081234567890&#10;6289876543210" required></textarea>
+              </label>
+              <label class="field">
+                <span>Pesan undangan (opsional)</span>
+                <input type="text" id="input-invite-comment" placeholder="Halo, bergabung ke grup project ya." maxlength="500" />
+              </label>
+              <fieldset class="field fieldset-options">
+                <legend>Siapa yang bisa kirim pesan?</legend>
+                <label class="option-row">
+                  <input type="radio" name="message-mode" value="all" checked />
+                  <span><strong>Semua anggota</strong> — cocok untuk grup kerja / diskusi (disarankan)</span>
+                </label>
+                <label class="option-row">
+                  <input type="radio" name="message-mode" value="admins_only" />
+                  <span><strong>Hanya admin</strong> — mode pengumuman, anggota hanya baca</span>
+                </label>
+              </fieldset>
+              <label class="option-row option-row--checkbox">
+                <input type="checkbox" id="input-promote-admin" />
+                <span>Jadikan semua anggota yang diundang sebagai <strong>admin grup</strong></span>
+              </label>
+              <button type="submit" class="btn btn--primary btn--block" id="btn-create-group">Buat grup & undang</button>
+              <p id="create-feedback" class="feedback" hidden></p>
+              <div id="create-results" class="participant-results" hidden></div>
+            </form>
+          </div>
+
+          <div class="send-card">
+            <h2>Tambah anggota ke grup</h2>
+            <p class="hint">
+              Bot harus admin grup agar bisa menambahkan anggota langsung. Jika tidak, undangan privat akan dikirim.
+            </p>
+            <form id="form-add-participants" class="form-stack">
+              <label class="field">
+                <span>Pilih grup</span>
+                <select id="select-group" required>
+                  <option value="">Memuat daftar grup…</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Daftar nomor</span>
+                <textarea id="input-add-phones" rows="6" placeholder="081234567890&#10;6289876543210" required></textarea>
+              </label>
+              <button type="submit" class="btn btn--primary btn--block" id="btn-add-participants">Tambah anggota</button>
+              <p id="add-feedback" class="feedback" hidden></p>
+              <div id="add-results" class="participant-results" hidden></div>
+            </form>
+          </div>
+        </main>
+      </div>
+    </div>
+    <script type="module" src="/app/group-manage.js"></script>
+  </body>
+</html>

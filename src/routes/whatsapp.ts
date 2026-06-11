@@ -9,6 +9,8 @@ import whatsappWeb from 'whatsapp-web.js'
 import { promises as fs } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { formatPhoneNumber, getValidatedContact } from '@/services/phone.service.js'
+import { registerGroupManagementRoutes } from '@/routes/group-management.routes.js'
 import {
   ErrorSchema,
   StatusSchema,
@@ -41,29 +43,6 @@ const execAsync = promisify(exec)
 const whatsapp = new OpenAPIHono()
 
 // ── Helper functions ────────────────────────────────────────────────
-
-function formatPhoneNumber(phoneNumber: string): string {
-  let formatted = phoneNumber.trim().replaceAll(/\D/g, '')
-  if (formatted.startsWith('0')) {
-    formatted = '62' + formatted.substring(1)
-  } else if (!formatted.startsWith('62') && formatted.length <= 10) {
-    formatted = '62' + formatted
-  }
-  return formatted
-}
-
-async function getValidatedContact(formattedPhone: string) {
-  const numberId = await whatsAppClient.getNumberId(formattedPhone)
-  if (!numberId) {
-    throw new Error(`Phone number ${formattedPhone} is not registered on WhatsApp`)
-  }
-  const contactId = numberId._serialized
-  const contact = await whatsAppClient.getContactById(contactId)
-  if (!contact) {
-    throw new Error(`Unable to get contact for ${formattedPhone}`)
-  }
-  return { contactId, contact }
-}
 
 async function sendMessageSafely(contactId: string, content: any, options: any = {}) {
   const contact = await whatsAppClient.getContactById(contactId)
@@ -273,7 +252,7 @@ whatsapp.openapi(sendMessageRoute, async (c) => {
       return c.json({ success: false, error: 'Phone number and message are required' }, 400)
     }
     const formattedPhone = formatPhoneNumber(phoneNumber)
-    const { contactId } = await getValidatedContact(formattedPhone)
+    const { contactId } = await getValidatedContact(whatsAppClient, formattedPhone)
     await sendMessageSafely(contactId, message)
     return c.json({ success: true, message: 'Message sent successfully', to: formattedPhone }, 200)
   } catch (error) {
@@ -318,7 +297,7 @@ whatsapp.openapi(sendImageRoute, async (c) => {
       return c.json({ success: false, error: 'Phone number and image are required', details: 'Image can be a file path (local) or URL' }, 400)
     }
     const formattedPhone = formatPhoneNumber(phoneNumber)
-    const { contactId } = await getValidatedContact(formattedPhone)
+    const { contactId } = await getValidatedContact(whatsAppClient, formattedPhone)
 
     let media: any
     if (image.startsWith('http://') || image.startsWith('https://')) {
@@ -860,5 +839,7 @@ whatsapp.openapi(resetRoute, async (c) => {
     return c.json({ success: false, error: 'Failed to reset service', details: error instanceof Error ? error.message : String(error) }, 500)
   }
 })
+
+registerGroupManagementRoutes(whatsapp)
 
 export default whatsapp

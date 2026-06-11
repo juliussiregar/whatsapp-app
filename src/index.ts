@@ -21,6 +21,7 @@ app.get("/app", serveStatic({ root: publicDir, path: "index.html" }));
 app.get("/app/groups", serveStatic({ root: publicDir, path: "groups.html" }));
 app.get("/app/personal", serveStatic({ root: publicDir, path: "personal.html" }));
 app.get("/app/send", serveStatic({ root: publicDir, path: "send.html" }));
+app.get("/app/group-manage", serveStatic({ root: publicDir, path: "group-manage.html" }));
 app.use(
   "/app/*",
   serveStatic({

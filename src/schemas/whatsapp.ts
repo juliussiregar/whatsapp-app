@@ -332,3 +332,142 @@ export const ResetResponseSchema = z
     note: z.string().optional().openapi({ example: 'Please restart the service to initialize new session' }),
   })
   .openapi('ResetResponse')
+
+// ── Group management (create / invite) ──────────────────────────────
+
+const PhoneListSchema = z
+  .array(z.string().min(1))
+  .min(1)
+  .max(50)
+  .openapi({ example: ['081234567890', '6289876543210'] })
+
+const BatchOptionsSchema = z.object({
+  batchSize: z
+    .number()
+    .int()
+    .min(1)
+    .max(30)
+    .optional()
+    .openapi({ example: 15, description: 'Jumlah nomor per batch saat menambah anggota (default 15)' }),
+  batchDelayMs: z
+    .number()
+    .int()
+    .min(0)
+    .max(60000)
+    .optional()
+    .openapi({ example: 2000, description: 'Jeda antar batch dalam milidetik (default 2000)' }),
+})
+
+export const ParticipantOutcomeSchema = z
+  .object({
+    phone: z.string().openapi({ example: '6281234567890' }),
+    contactId: z.string().nullable().openapi({ example: '6281234567890@c.us' }),
+    status: z.enum(['added', 'invited', 'failed', 'skipped']).openapi({ example: 'added' }),
+    statusCode: z.number().nullable().openapi({ example: 200 }),
+    message: z.string().openapi({ example: 'Berhasil ditambahkan ke grup' }),
+  })
+  .openapi('ParticipantOutcome')
+
+export const GroupMutationSummarySchema = z
+  .object({
+    added: z.number().openapi({ example: 8 }),
+    invited: z.number().openapi({ example: 1 }),
+    failed: z.number().openapi({ example: 0 }),
+    skipped: z.number().openapi({ example: 1 }),
+  })
+  .openapi('GroupMutationSummary')
+
+export const GroupSettingsSchema = z
+  .object({
+    messageMode: z.enum(['all', 'admins_only']).openapi({ example: 'all' }),
+    membersCanSendMessages: z.boolean().openapi({ example: true }),
+    membersPromotedToAdmin: z.boolean().openapi({ example: false }),
+    promoteFailed: z.boolean().openapi({ example: false }),
+  })
+  .openapi('GroupSettings')
+
+export const CreateGroupBodySchema = z
+  .object({
+    name: z.string().min(1).max(100).openapi({ example: 'Tim Project Alpha' }),
+    participants: PhoneListSchema,
+    inviteComment: z
+      .string()
+      .max(500)
+      .optional()
+      .openapi({ example: 'Halo, bergabung ke grup project ya.' }),
+    messageMode: z
+      .enum(['all', 'admins_only'])
+      .optional()
+      .default('all')
+      .openapi({
+        example: 'all',
+        description: 'all = semua anggota bisa kirim pesan; admins_only = hanya admin (mode pengumuman)',
+      }),
+    promoteMembersToAdmin: z
+      .boolean()
+      .optional()
+      .default(false)
+      .openapi({
+        example: false,
+        description: 'Jika true, semua anggota yang ditambahkan dijadikan admin grup',
+      }),
+  })
+  .merge(BatchOptionsSchema)
+  .openapi('CreateGroupBody')
+
+export const CreateGroupResponseSchema = z
+  .object({
+    success: z.boolean().openapi({ example: true }),
+    groupId: z.string().openapi({ example: '120363012345678901@g.us' }),
+    groupName: z.string().openapi({ example: 'Tim Project Alpha' }),
+    participants: z.array(ParticipantOutcomeSchema),
+    summary: GroupMutationSummarySchema,
+    settings: GroupSettingsSchema,
+  })
+  .openapi('CreateGroupResponse')
+
+export const SetGroupMessagePermissionBodySchema = z
+  .object({
+    groupId: z
+      .string()
+      .regex(/@g\.us$/)
+      .openapi({ example: '120363012345678901@g.us' }),
+    messageMode: z
+      .enum(['all', 'admins_only'])
+      .optional()
+      .default('all')
+      .openapi({
+        example: 'all',
+        description: 'all = semua anggota bisa kirim; admins_only = hanya admin',
+      }),
+  })
+  .openapi('SetGroupMessagePermissionBody')
+
+export const SetGroupMessagePermissionResponseSchema = z
+  .object({
+    success: z.boolean().openapi({ example: true }),
+    groupId: z.string(),
+    messageMode: z.enum(['all', 'admins_only']),
+    membersCanSendMessages: z.boolean().openapi({ example: true }),
+  })
+  .openapi('SetGroupMessagePermissionResponse')
+
+export const AddGroupParticipantsBodySchema = z
+  .object({
+    groupId: z
+      .string()
+      .regex(/@g\.us$/)
+      .openapi({ example: '120363012345678901@g.us', description: 'ID grup dari GET /whatsapp/groups' }),
+    participants: PhoneListSchema,
+  })
+  .merge(BatchOptionsSchema)
+  .openapi('AddGroupParticipantsBody')
+
+export const AddGroupParticipantsResponseSchema = z
+  .object({
+    success: z.boolean().openapi({ example: true }),
+    groupId: z.string().openapi({ example: '120363012345678901@g.us' }),
+    participants: z.array(ParticipantOutcomeSchema),
+    summary: GroupMutationSummarySchema,
+  })
+  .openapi('AddGroupParticipantsResponse')

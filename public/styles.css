@@ -151,11 +151,117 @@ body {
   box-shadow: none;
 }
 
+.participant-results {
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.participant-results__summary {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+}
+
+.participant-results__table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.participant-results__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.participant-results__table th,
+.participant-results__table td {
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.participant-results__table th {
+  background: var(--surface-2);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.participant-results__status {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.participant-results__status--added {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.participant-results__status--invited {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.participant-results__status--failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.participant-results__status--skipped {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.field select {
+  font: inherit;
+  font-weight: 400;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.fieldset-options {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  margin: 0;
+}
+
+.fieldset-options legend {
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+
+.option-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  font-weight: 400;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  cursor: pointer;
+}
+
+.option-row input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.option-row--checkbox {
+  padding: 0.25rem 0;
+}
+
 .page-main--send {
   padding: 1rem;
   overflow-y: auto;
   align-items: flex-start;
   justify-content: center;
+  gap: 1.25rem;
 }
 
 .connect-card {
