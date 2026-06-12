@@ -353,6 +353,7 @@ whatsapp.openapi(groupsRoute, async (c) => {
       id: g.id,
       name: g.name,
       participantsCount: g.participantsCount,
+      botIsMember: Boolean(g.botIsMember),
     }))
     return c.json({ success: true, groups, total: groups.length }, 200)
   } catch (error) {

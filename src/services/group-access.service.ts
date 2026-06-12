@@ -107,6 +107,23 @@ async function loadGroupParticipants(client: Client, groupId: string): Promise<R
 	return participants as ResolvedParticipant[]
 }
 
+export async function getBotGroupAccess(
+	client: Client,
+	groupId: string,
+): Promise<{ botIsMember: boolean; participantsCount: number; isAdmin: boolean }> {
+	const botId = botWid(client)
+	const participants = await loadGroupParticipants(client, groupId)
+	const isMember = Boolean(
+		botId && participants.some((p) => isSameParticipant(p.id, botId)),
+	)
+	const me = botId ? participants.find((p) => isSameParticipant(p.id, botId)) : undefined
+	return {
+		botIsMember: isMember,
+		participantsCount: participants.length,
+		isAdmin: Boolean(me?.isAdmin || me?.isSuperAdmin),
+	}
+}
+
 /**
  * Pastikan bot masih anggota grup (bukan entri cache setelah leave).
  */

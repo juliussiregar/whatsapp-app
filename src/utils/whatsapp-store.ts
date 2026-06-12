@@ -11,6 +11,7 @@ export interface ChatListItem {
   name: string;
   isGroup: boolean;
   participantsCount: number;
+  botIsMember?: boolean;
   unreadCount: number;
   timestamp: number | null;
   lastMessage: { body: string; fromMe: boolean; timestamp: number } | null;
@@ -328,6 +329,7 @@ function mergeChats(primary: ChatListItem[], secondary: ChatListItem[]): ChatLis
         existing.participantsCount,
         c.participantsCount,
       ),
+      botIsMember: existing.botIsMember || c.botIsMember,
       lastMessage: existing.lastMessage || c.lastMessage,
       timestamp: existing.timestamp || c.timestamp,
     });

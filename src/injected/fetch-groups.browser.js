@@ -27,10 +27,48 @@ function isGroupChat(chat, id) {
   return false;
 }
 
+function getBotIdLookup() {
+  var lookup = {};
+  try {
+    var user = window.Store.User;
+    var me = user.getMaybeMePnUser && user.getMaybeMePnUser();
+    if (me) {
+      var sid = serializeChatId(me);
+      if (sid) lookup[sid] = true;
+      if (me.user) lookup[me.user] = true;
+    }
+    var lid = user.getMaybeMeLidUser && user.getMaybeMeLidUser();
+    if (lid) {
+      var lidSid = serializeChatId(lid);
+      if (lidSid) lookup[lidSid] = true;
+    }
+  } catch (e) {
+    /* ignore */
+  }
+  return lookup;
+}
+
+function isBotGroupMember(participants, botIds) {
+  if (!participants || !botIds) return false;
+  var models = participants._models || (Array.isArray(participants) ? participants : []);
+  for (var i = 0; i < models.length; i++) {
+    var pid = serializeChatId(models[i].id);
+    if (!pid && models[i].id && models[i].id.user) {
+      pid = models[i].id.user + "@" + (models[i].id.server || "c.us");
+    }
+    if (!pid) continue;
+    if (botIds[pid]) return true;
+    var user = pid.split("@")[0];
+    if (botIds[user]) return true;
+  }
+  return false;
+}
+
 export default function fetchGroupsInBrowser() {
   var store = window.Store;
   var chats = store.Chat.getModelsArray();
   var groups = [];
+  var botIds = getBotIdLookup();
 
   for (var i = 0; i < chats.length; i++) {
     var chat = chats[i];
@@ -63,11 +101,17 @@ export default function fetchGroupsInBrowser() {
         };
       }
 
+      var botIsMember = isBotGroupMember(
+        chat.groupMetadata && chat.groupMetadata.participants,
+        botIds,
+      );
+
       groups.push({
         id: id,
         name: name,
         isGroup: true,
         participantsCount: participantsCount,
+        botIsMember: botIsMember,
         unreadCount: chat.unreadCount || 0,
         timestamp: chat.t || chat.timestamp || (lastMessage && lastMessage.timestamp) || null,
         lastMessage: lastMessage,

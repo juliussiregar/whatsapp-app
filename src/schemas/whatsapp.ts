@@ -126,6 +126,10 @@ export const GroupSchema = z.object({
   id: z.string().openapi({ example: '120363012345678901@g.us' }),
   name: z.string().openapi({ example: 'Tim Project Alpha' }),
   participantsCount: z.number().openapi({ example: 15 }),
+  botIsMember: z.boolean().openapi({
+    example: true,
+    description: 'True jika akun bot masih anggota grup (bisa kelola & kirim pesan)',
+  }),
 })
 
 export const GroupsResponseSchema = z
@@ -135,6 +139,20 @@ export const GroupsResponseSchema = z
     total: z.number().openapi({ example: 3 }),
   })
   .openapi('GroupsResponse')
+
+export const GroupBotAccessQuerySchema = z.object({
+  groupId: z.string().openapi({ example: '120363012345678901@g.us' }),
+})
+
+export const GroupBotAccessResponseSchema = z
+  .object({
+    success: z.boolean().openapi({ example: true }),
+    groupId: z.string(),
+    botIsMember: z.boolean(),
+    participantsCount: z.number(),
+    isAdmin: z.boolean(),
+  })
+  .openapi('GroupBotAccessResponse')
 
 // ── Chats & Messages ────────────────────────────────────────────────
 

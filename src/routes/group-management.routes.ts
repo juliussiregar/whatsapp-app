@@ -1,7 +1,11 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 
 import { whatsAppClient, isReady } from '@/clients/whatsapp.js'
-import { assertBotIsGroupAdmin, GroupAccessError } from '@/services/group-access.service.js'
+import {
+	assertBotIsGroupAdmin,
+	getBotGroupAccess,
+	GroupAccessError,
+} from '@/services/group-access.service.js'
 import { summarizeParticipants } from '@/services/group-participant.mapper.js'
 import {
 	addParticipantsToGroup,
@@ -18,6 +22,8 @@ import {
 	DeleteGroupBodySchema,
 	DeleteGroupResponseSchema,
 	ErrorSchema,
+	GroupBotAccessQuerySchema,
+	GroupBotAccessResponseSchema,
 	SetGroupMessagePermissionBodySchema,
 	SetGroupMessagePermissionResponseSchema,
 } from '@/schemas/whatsapp.js'
@@ -54,6 +60,26 @@ function groupAccessErrorResponse(c: any, error: GroupAccessError) {
 		400,
 	)
 }
+
+const groupBotAccessRoute = createRoute({
+	method: 'get',
+	path: '/groups/bot-access',
+	tags: ['WhatsApp - Group'],
+	summary: 'Cek apakah bot masih anggota grup',
+	request: {
+		query: GroupBotAccessQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: GroupBotAccessResponseSchema } },
+			description: 'Status keanggotaan bot di grup',
+		},
+		503: {
+			content: { 'application/json': { schema: ErrorSchema } },
+			description: 'WhatsApp client belum siap',
+		},
+	},
+})
 
 const createGroupRoute = createRoute({
 	method: 'post',
@@ -181,6 +207,36 @@ const setMessagePermissionRoute = createRoute({
 })
 
 export function registerGroupManagementRoutes(app: OpenAPIHono) {
+	app.openapi(groupBotAccessRoute, async (c) => {
+		try {
+			if (!isReady()) return notReadyResponse(c)
+
+			const { groupId } = c.req.valid('query')
+			const access = await getBotGroupAccess(whatsAppClient, groupId)
+
+			return c.json(
+				{
+					success: true,
+					groupId,
+					botIsMember: access.botIsMember,
+					participantsCount: access.participantsCount,
+					isAdmin: access.isAdmin,
+				},
+				200,
+			)
+		} catch (error) {
+			console.error('Error checking group bot access:', error)
+			return c.json(
+				{
+					success: false,
+					error: 'Failed to check group access',
+					details: error instanceof Error ? error.message : String(error),
+				},
+				500,
+			)
+		}
+	})
+
 	app.openapi(createGroupRoute, async (c) => {
 		try {
 			if (!isReady()) return notReadyResponse(c)
