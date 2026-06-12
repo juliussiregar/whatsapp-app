@@ -44,6 +44,7 @@ export const API = {
   sendGroupMessage: "/whatsapp/send-group-message",
   createGroup: "/whatsapp/groups/create",
   addGroupParticipants: "/whatsapp/groups/add-participants",
+  deleteGroup: "/whatsapp/groups/delete",
 };
 
 export const STATUS_POLL_MS = 3000;

@@ -369,6 +369,7 @@ export async function fetchChatsFromStore(
 
   if (filter === "group") {
     chats = chats.filter((c) => c.isGroup || c.id.endsWith("@g.us"));
+    chats = chats.filter((c) => c.participantsCount > 0);
   }
   if (filter === "personal") {
     chats = chats.filter((c) => !c.isGroup && !c.id.includes("@broadcast"));

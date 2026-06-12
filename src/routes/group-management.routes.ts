@@ -1,11 +1,13 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 
 import { whatsAppClient, isReady } from '@/clients/whatsapp.js'
+import { assertBotIsGroupAdmin, GroupAccessError } from '@/services/group-access.service.js'
 import { summarizeParticipants } from '@/services/group-participant.mapper.js'
 import {
 	addParticipantsToGroup,
 	createGroupWithParticipants,
 	GroupValidationError,
+	leaveGroup,
 } from '@/services/group.service.js'
 import { setGroupMessageMode } from '@/services/group-settings.service.js'
 import {
@@ -13,6 +15,8 @@ import {
 	AddGroupParticipantsResponseSchema,
 	CreateGroupBodySchema,
 	CreateGroupResponseSchema,
+	DeleteGroupBodySchema,
+	DeleteGroupResponseSchema,
 	ErrorSchema,
 	SetGroupMessagePermissionBodySchema,
 	SetGroupMessagePermissionResponseSchema,
@@ -36,6 +40,16 @@ function validationErrorResponse(c: any, error: GroupValidationError) {
 			error: error.message,
 			participants: error.participants,
 			summary: summarizeParticipants(error.participants),
+		},
+		400,
+	)
+}
+
+function groupAccessErrorResponse(c: any, error: GroupAccessError) {
+	return c.json(
+		{
+			success: false,
+			error: error.message,
 		},
 		400,
 	)
@@ -96,6 +110,39 @@ const addParticipantsRoute = createRoute({
 		500: {
 			content: { 'application/json': { schema: ErrorSchema } },
 			description: 'Gagal menambahkan anggota',
+		},
+		503: {
+			content: { 'application/json': { schema: ErrorSchema } },
+			description: 'WhatsApp client belum siap',
+		},
+	},
+})
+
+const deleteGroupRoute = createRoute({
+	method: 'post',
+	path: '/groups/delete',
+	tags: ['WhatsApp - Group'],
+	summary: 'Hapus grup (bot keluar dari grup)',
+	description:
+		'Membuat akun bot WhatsApp keluar dari grup. Grup hilang dari daftar bot; anggota lain tetap ada di grup. Ini bukan menghapus grup untuk semua orang.',
+	request: {
+		body: {
+			content: { 'application/json': { schema: DeleteGroupBodySchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: DeleteGroupResponseSchema } },
+			description: 'Bot berhasil keluar dari grup',
+		},
+		400: {
+			content: { 'application/json': { schema: ErrorSchema } },
+			description: 'Group ID tidak valid',
+		},
+		500: {
+			content: { 'application/json': { schema: ErrorSchema } },
+			description: 'Gagal keluar dari grup',
 		},
 		503: {
 			content: { 'application/json': { schema: ErrorSchema } },
@@ -184,6 +231,9 @@ export function registerGroupManagementRoutes(app: OpenAPIHono) {
 
 			return c.json({ success: true, ...result }, 200)
 		} catch (error) {
+			if (error instanceof GroupAccessError) {
+				return groupAccessErrorResponse(c, error)
+			}
 			if (error instanceof GroupValidationError) {
 				return validationErrorResponse(c, error)
 			}
@@ -199,12 +249,42 @@ export function registerGroupManagementRoutes(app: OpenAPIHono) {
 		}
 	})
 
+	app.openapi(deleteGroupRoute, async (c) => {
+		try {
+			if (!isReady()) return notReadyResponse(c)
+
+			const { groupId } = c.req.valid('json')
+			const result = await leaveGroup(whatsAppClient, groupId)
+
+			return c.json(
+				{
+					success: true,
+					groupId: result.groupId,
+					groupName: result.groupName,
+					message: `Bot telah keluar dari grup "${result.groupName}".`,
+				},
+				200,
+			)
+		} catch (error) {
+			console.error('Error leaving WhatsApp group:', error)
+			return c.json(
+				{
+					success: false,
+					error: 'Failed to delete group',
+					details: error instanceof Error ? error.message : String(error),
+				},
+				500,
+			)
+		}
+	})
+
 	app.openapi(setMessagePermissionRoute, async (c) => {
 		try {
 			if (!isReady()) return notReadyResponse(c)
 
 			const { groupId, messageMode } = c.req.valid('json')
 			const mode = messageMode === 'admins_only' ? 'admins_only' : 'all'
+			await assertBotIsGroupAdmin(whatsAppClient, groupId)
 			const ok = await setGroupMessageMode(whatsAppClient, groupId, mode)
 
 			if (!ok) {
@@ -228,6 +308,9 @@ export function registerGroupManagementRoutes(app: OpenAPIHono) {
 				200,
 			)
 		} catch (error) {
+			if (error instanceof GroupAccessError) {
+				return groupAccessErrorResponse(c, error)
+			}
 			console.error('Error setting group message permission:', error)
 			return c.json(
 				{

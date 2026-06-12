@@ -1,5 +1,6 @@
 import type { Client, GroupChat } from 'whatsapp-web.js'
 
+import { assertBotInGroup, getGroupChat } from '@/services/group-access.service.js'
 import {
 	mapWaParticipantResults,
 	summarizeParticipants,
@@ -45,19 +46,6 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 function isCreateGroupError(result: unknown): result is string {
 	return typeof result === 'string'
-}
-
-async function getGroupChat(client: Client, groupId: string) {
-	if (!groupId.includes('@g.us')) {
-		throw new Error('Group ID harus berformat 123456789012345678@g.us')
-	}
-
-	const chat = await client.getChatById(groupId)
-	if (!chat?.isGroup) {
-		throw new Error(`Chat ${groupId} bukan grup WhatsApp`)
-	}
-
-	return chat as GroupChat
 }
 
 async function addParticipantBatches(
@@ -155,12 +143,31 @@ export async function createGroupWithParticipants(
 	}
 }
 
+export interface LeaveGroupResult {
+	groupId: string
+	groupName: string
+}
+
+export async function leaveGroup(client: Client, groupId: string): Promise<LeaveGroupResult> {
+	const chat = await getGroupChat(client, groupId)
+	const groupName = chat.name || groupId
+	await chat.leave()
+	try {
+		await chat.delete()
+	} catch (error) {
+		console.warn(`[WA Group] delete chat after leave failed (${groupId}):`, error)
+	}
+	return { groupId, groupName }
+}
+
 export async function addParticipantsToGroup(
 	client: Client,
 	groupId: string,
 	phoneNumbers: string[],
 	options: AddParticipantsOptions = {},
 ): Promise<AddParticipantsResult> {
+	await assertBotInGroup(client, groupId)
+
 	const batch = normalizeBatchOptions(options)
 	const inputs = await resolveParticipantInputs(client, phoneNumbers)
 	const validIds = inputs

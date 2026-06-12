@@ -73,6 +73,24 @@
             </form>
           </div>
 
+          <div class="send-card send-card--danger">
+            <h2>Hapus grup (bot keluar)</h2>
+            <p class="hint">
+              Bot akan <strong>keluar</strong> dari grup yang dipilih. Grup tidak dihapus untuk semua anggota — hanya hilang dari akun bot ini.
+              Untuk grup SPK lama yang tidak dipakai, hapus juga baris mapping di ERP jika perlu.
+            </p>
+            <form id="form-delete-group" class="form-stack">
+              <label class="field">
+                <span>Pilih grup</span>
+                <select id="select-group-delete" required>
+                  <option value="">Memuat daftar grup…</option>
+                </select>
+              </label>
+              <button type="submit" class="btn btn--danger btn--block" id="btn-delete-group">Hapus grup untuk bot</button>
+              <p id="delete-feedback" class="feedback" hidden></p>
+            </form>
+          </div>
+
           <div class="send-card">
             <h2>Tambah anggota ke grup</h2>
             <p class="hint">

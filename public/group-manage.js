@@ -85,28 +85,45 @@ function renderParticipantResults(container, data) {
     </div>`;
 }
 
-async function loadGroups() {
-  const select = $("select-group");
-  if (!select) return;
+function renderGroupOptions(groups) {
+  if (!groups.length) {
+    return '<option value="">Belum ada grup</option>';
+  }
+  return (
+    '<option value="">— Pilih grup —</option>' +
+    groups
+      .map(
+        (g) =>
+          `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)} (${g.participantsCount} anggota)</option>`,
+      )
+      .join("")
+  );
+}
 
-  select.innerHTML = '<option value="">Memuat…</option>';
+function setSelectLoading(select, message = "Memuat…") {
+  if (!select) return;
+  select.innerHTML = `<option value="">${message}</option>`;
+}
+
+async function loadGroups() {
+  const selects = [$("select-group"), $("select-group-delete")].filter(Boolean);
+  if (!selects.length) return;
+
+  selects.forEach((select) => setSelectLoading(select));
   try {
     const data = await fetchJson(API.groups);
-    const groups = data.groups || [];
-    if (!groups.length) {
-      select.innerHTML = '<option value="">Belum ada grup</option>';
-      return;
-    }
-    select.innerHTML =
-      '<option value="">— Pilih grup —</option>' +
-      groups
-        .map(
-          (g) =>
-            `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)} (${g.participantsCount} anggota)</option>`,
-        )
-        .join("");
+    const groups = (data.groups || []).filter((g) => (g.participantsCount || 0) > 0);
+    const html = groups.length
+      ? renderGroupOptions(groups)
+      : '<option value="">Tidak ada grup aktif — buat grup baru di atas</option>';
+    selects.forEach((select) => {
+      select.innerHTML = html;
+    });
   } catch (err) {
-    select.innerHTML = `<option value="">Gagal memuat: ${escapeHtml(err.message)}</option>`;
+    const html = `<option value="">Gagal memuat: ${escapeHtml(err.message)}</option>`;
+    selects.forEach((select) => {
+      select.innerHTML = html;
+    });
   }
 }
 
@@ -157,6 +174,47 @@ $("form-create-group")?.addEventListener("submit", async (e) => {
     loadGroups();
   } catch (err) {
     showFeedback($("create-feedback"), err.message, false);
+    showToast(err.message, false);
+  } finally {
+    setBusy(false);
+    setButtonLoading(btn, false);
+  }
+});
+
+$("form-delete-group")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (busy) return;
+
+  const select = $("select-group-delete");
+  const groupId = select?.value;
+  const groupLabel = select?.selectedOptions?.[0]?.textContent?.trim() || groupId;
+
+  if (!groupId) {
+    showFeedback($("delete-feedback"), "Pilih grup terlebih dahulu.", false);
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Bot akan keluar dari grup:\n\n${groupLabel}\n\nGrup tidak dihapus untuk anggota lain. Lanjutkan?`,
+  );
+  if (!confirmed) return;
+
+  setBusy(true);
+  const btn = $("btn-delete-group");
+  setButtonLoading(btn, true);
+  hideFeedback($("delete-feedback"));
+
+  try {
+    const res = await fetchJson(API.deleteGroup, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId }),
+    });
+    showFeedback($("delete-feedback"), res.message || "Grup dihapus untuk bot.", true, true);
+    showToast(res.message || "Bot keluar dari grup", true);
+    loadGroups();
+  } catch (err) {
+    showFeedback($("delete-feedback"), err.message, false);
     showToast(err.message, false);
   } finally {
     setBusy(false);

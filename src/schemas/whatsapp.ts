@@ -471,3 +471,23 @@ export const AddGroupParticipantsResponseSchema = z
     summary: GroupMutationSummarySchema,
   })
   .openapi('AddGroupParticipantsResponse')
+
+export const DeleteGroupBodySchema = z
+  .object({
+    groupId: z
+      .string()
+      .regex(/@g\.us$/)
+      .openapi({ example: '120363012345678901@g.us', description: 'ID grup dari GET /whatsapp/groups' }),
+  })
+  .openapi('DeleteGroupBody')
+
+export const DeleteGroupResponseSchema = z
+  .object({
+    success: z.boolean().openapi({ example: true }),
+    groupId: z.string(),
+    groupName: z.string().optional(),
+    message: z.string().openapi({
+      example: 'Bot telah keluar dari grup. Grup tidak lagi muncul untuk akun bot ini.',
+    }),
+  })
+  .openapi('DeleteGroupResponse')

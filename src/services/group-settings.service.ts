@@ -1,17 +1,10 @@
-import type { Client, GroupChat } from 'whatsapp-web.js'
+import type { Client } from 'whatsapp-web.js'
 
+import { getGroupChat } from '@/services/group-access.service.js'
 import type { AppliedGroupSettings, CreateGroupSettingsOptions, GroupMessageMode } from '@/types/group-settings.js'
 
 function sleep(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function getGroupChat(client: Client, groupId: string): Promise<GroupChat> {
-	const chat = await client.getChatById(groupId)
-	if (!chat?.isGroup) {
-		throw new Error(`Chat ${groupId} bukan grup WhatsApp`)
-	}
-	return chat as GroupChat
 }
 
 function resolveMessageMode(options: CreateGroupSettingsOptions): GroupMessageMode {
@@ -33,10 +26,17 @@ export async function setGroupMessageMode(
 			await sleep(1000 * attempt)
 		}
 
-		const chat = await getGroupChat(client, groupId)
-		const ok = await chat.setMessagesAdminsOnly(adminsOnly)
-		if (ok !== false) {
-			return true
+		try {
+			const chat = await getGroupChat(client, groupId)
+			const ok = await chat.setMessagesAdminsOnly(adminsOnly)
+			if (ok !== false) {
+				return true
+			}
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error)
+			console.warn(
+				`[WA Group] setMessagesAdminsOnly attempt ${attempt + 1}/4 failed (${groupId}, adminsOnly=${adminsOnly}): ${detail}`,
+			)
 		}
 	}
 

@@ -92,7 +92,17 @@ async function loadGroups() {
       console.warn("groups:", e);
     }
 
-    groups = [...merged.values()];
+    groups = [...merged.values()].filter((g) => (g.participantsCount || 0) > 0);
+
+    if (selectedGroup && !groups.some((g) => g.id === selectedGroup.id)) {
+      selectedGroup = null;
+      setLastChatId("groups", "");
+      mobileChat.closeChat?.();
+      $("group-chat-title").textContent = "Pilih grup";
+      if ($("group-chat-meta")) $("group-chat-meta").textContent = "";
+      if (messagesEl) messagesEl.innerHTML = "";
+      setComposerEnabled(false);
+    }
 
     if (count) count.textContent = groups.length ? `(${groups.length})` : "";
 
