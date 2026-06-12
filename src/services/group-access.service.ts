@@ -1,10 +1,16 @@
-import type { Client, GroupChat, GroupParticipant } from 'whatsapp-web.js'
+import type { Client, GroupChat } from 'whatsapp-web.js'
 
 export class GroupAccessError extends Error {
 	constructor(message: string) {
 		super(message)
 		this.name = 'GroupAccessError'
 	}
+}
+
+interface ResolvedParticipant {
+	id: string
+	isAdmin: boolean
+	isSuperAdmin: boolean
 }
 
 export async function getGroupChat(client: Client, groupId: string): Promise<GroupChat> {
@@ -33,6 +39,75 @@ function isSameParticipant(participantId: string | undefined, botId: string): bo
 }
 
 /**
+ * Muat anggota grup dari WhatsApp Web Store (lebih akurat daripada chat.participants dari getChatById).
+ */
+async function loadGroupParticipants(client: Client, groupId: string): Promise<ResolvedParticipant[]> {
+	const pupPage = (client as { pupPage?: { evaluate: (fn: unknown, ...args: unknown[]) => Promise<unknown> } })
+		.pupPage
+	if (!pupPage) {
+		throw new GroupAccessError('WhatsApp client belum siap — tunggu status ready lalu coba lagi.')
+	}
+
+	const participants = await pupPage.evaluate(async (gid: string) => {
+		function serializeId(id: unknown): string | null {
+			if (!id) return null
+			if (typeof id === 'string') return id
+			if (typeof id !== 'object') return null
+			const rec = id as Record<string, unknown>
+			if (typeof rec._serialized === 'string') return rec._serialized
+			if (typeof rec.user === 'string' && typeof rec.server === 'string') {
+				return `${rec.user}@${rec.server}`
+			}
+			return null
+		}
+
+		async function readParticipants(chat: { groupMetadata?: { participants?: unknown } } | null) {
+			const parts = chat?.groupMetadata?.participants as
+				| { _models?: Array<Record<string, unknown>> }
+				| Array<Record<string, unknown>>
+				| undefined
+			if (!parts) return []
+
+			const models = Array.isArray(parts) ? parts : parts._models || []
+			const out: Array<{ id: string; isAdmin: boolean; isSuperAdmin: boolean }> = []
+
+			for (const p of models) {
+				const pid = serializeId(p.id)
+				if (!pid) continue
+				out.push({
+					id: pid,
+					isAdmin: Boolean(p.isAdmin),
+					isSuperAdmin: Boolean(p.isSuperAdmin),
+				})
+			}
+			return out
+		}
+
+		// @ts-expect-error injected in WhatsApp Web
+		const getChat = () => window.WWebJS.getChat(gid, { getAsModel: false })
+		// @ts-expect-error injected in WhatsApp Web
+		const refresh = window.Store?.GroupQueryAndUpdate
+
+		let chat = await getChat()
+		let participants = await readParticipants(chat)
+
+		if (!participants.length && typeof refresh === 'function') {
+			try {
+				await refresh(gid)
+			} catch {
+				/* ignore */
+			}
+			chat = await getChat()
+			participants = await readParticipants(chat)
+		}
+
+		return participants
+	}, groupId)
+
+	return participants as ResolvedParticipant[]
+}
+
+/**
  * Pastikan bot masih anggota grup (bukan entri cache setelah leave).
  */
 export async function assertBotInGroup(client: Client, groupId: string): Promise<GroupChat> {
@@ -42,13 +117,19 @@ export async function assertBotInGroup(client: Client, groupId: string): Promise
 		throw new GroupAccessError('Bot belum siap — tunggu status ready lalu coba lagi.')
 	}
 
-	const participants = chat.participants ?? []
-	const isMember = participants.some((p: GroupParticipant) => isSameParticipant(p.id?._serialized, botId))
+	const participants = await loadGroupParticipants(client, groupId)
+	const isMember = participants.some((p) => isSameParticipant(p.id, botId))
+	const label = chat.name || groupId
 
-	if (!participants.length || !isMember) {
-		const label = chat.name || groupId
+	if (!participants.length) {
 		throw new GroupAccessError(
-			`Bot tidak lagi di grup "${label}" (0 anggota / sudah keluar). Buat grup baru di halaman ini atau perbarui mapping di ERP.`,
+			`Tidak bisa membaca anggota grup "${label}". Grup mungkin sudah dihapus atau bot sudah keluar. Buat grup baru atau perbarui mapping di ERP.`,
+		)
+	}
+
+	if (!isMember) {
+		throw new GroupAccessError(
+			`Bot tidak ada di grup "${label}" (${participants.length} anggota lain). Perbarui Group ID di ERP ke grup yang benar.`,
 		)
 	}
 
@@ -65,7 +146,8 @@ export async function assertBotIsGroupAdmin(client: Client, groupId: string): Pr
 		throw new GroupAccessError('Bot belum siap — tunggu status ready lalu coba lagi.')
 	}
 
-	const me = chat.participants.find((p: GroupParticipant) => isSameParticipant(p.id?._serialized, botId))
+	const participants = await loadGroupParticipants(client, groupId)
+	const me = participants.find((p) => isSameParticipant(p.id, botId))
 	if (!me?.isAdmin && !me?.isSuperAdmin) {
 		const label = chat.name || groupId
 		throw new GroupAccessError(
