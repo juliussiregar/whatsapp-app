@@ -150,6 +150,15 @@ function getPupPage() {
   };
 }
 
+/** Serialize Puppeteer store reads — concurrent evaluate() calls race and destroy context. */
+let storeOpChain: Promise<unknown> = Promise.resolve();
+
+function withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = storeOpChain.then(fn, fn);
+  storeOpChain = run.catch(() => undefined);
+  return run;
+}
+
 function mapChatModel(chat: {
   id?: { _serialized?: string };
   name?: string;
@@ -214,7 +223,9 @@ async function fetchChatsViaStoreEvaluate(): Promise<ChatListItem[]> {
   const pupPage = getPupPage();
   const raw = await pupPage.evaluate(() => {
     // @ts-ignore — runs in browser
-    const chats = window.Store.Chat.getModelsArray();
+    const store = window.Store;
+    if (!store?.Chat?.getModelsArray) return [];
+    const chats = store.Chat.getModelsArray();
     const items: {
       id: string;
       name: string;
@@ -340,56 +351,58 @@ function mergeChats(primary: ChatListItem[], secondary: ChatListItem[]): ChatLis
 export async function fetchChatsFromStore(
   filter: ChatFilter,
 ): Promise<ChatListItem[]> {
-  let fromClient: ChatListItem[] = [];
-  let fromStore: ChatListItem[] = [];
+  return withStoreLock(async () => {
+    let fromClient: ChatListItem[] = [];
+    let fromStore: ChatListItem[] = [];
 
-  try {
-    fromClient = await fetchChatsViaClient();
-    console.info(`[WA Store] getChats(): ${fromClient.length} chats`);
-  } catch (err) {
-    console.warn("[WA Store] getChats() failed:", err);
-  }
+    try {
+      fromClient = await fetchChatsViaClient();
+      console.info(`[WA Store] getChats(): ${fromClient.length} chats`);
+    } catch (err) {
+      console.warn("[WA Store] getChats() failed:", err);
+    }
 
-  try {
-    fromStore = await fetchChatsViaStoreEvaluate();
-    console.info(`[WA Store] Store evaluate: ${fromStore.length} chats`);
-  } catch (err) {
-    console.warn("[WA Store] Store evaluate failed:", err);
-  }
+    try {
+      fromStore = await fetchChatsViaStoreEvaluate();
+      console.info(`[WA Store] Store evaluate: ${fromStore.length} chats`);
+    } catch (err) {
+      console.warn("[WA Store] Store evaluate failed:", err);
+    }
 
-  let chats = mergeChats(fromClient, fromStore);
+    let chats = mergeChats(fromClient, fromStore);
 
-  if (filter === "group" || filter === "all") {
-    const fromGroups = await fetchGroupsViaStoreDedicated();
-    chats = mergeChats(chats, fromGroups);
-  }
+    if (filter === "group" || filter === "all") {
+      const fromGroups = await fetchGroupsViaStoreDedicated();
+      chats = mergeChats(chats, fromGroups);
+    }
 
-  chats = chats.map((c) => ({
-    ...c,
-    isGroup: c.isGroup || c.id.endsWith("@g.us"),
-  }));
+    chats = chats.map((c) => ({
+      ...c,
+      isGroup: c.isGroup || c.id.endsWith("@g.us"),
+    }));
 
-  if (filter === "group") {
-    chats = chats.filter((c) => c.isGroup || c.id.endsWith("@g.us"));
-    chats = chats.filter((c) => c.participantsCount > 0);
-  }
-  if (filter === "personal") {
-    chats = chats.filter((c) => !c.isGroup && !c.id.includes("@broadcast"));
-  }
-
-  if (chats.length === 0) {
     if (filter === "group") {
+      chats = chats.filter((c) => c.isGroup || c.id.endsWith("@g.us"));
+      chats = chats.filter((c) => c.participantsCount > 0);
+    }
+    if (filter === "personal") {
+      chats = chats.filter((c) => !c.isGroup && !c.id.includes("@broadcast"));
+    }
+
+    if (chats.length === 0) {
+      if (filter === "group") {
+        throw new Error(
+          "Tidak ada grup ditemukan. Buka daftar grup di WhatsApp HP, scroll sedikit, tunggu 10 detik, lalu klik ↻ di dashboard.",
+        );
+      }
       throw new Error(
-        "Tidak ada grup ditemukan. Buka daftar grup di WhatsApp HP, scroll sedikit, tunggu 10 detik, lalu klik ↻ di dashboard.",
+        "Tidak ada chat ditemukan. Pastikan WhatsApp sudah ready dan ada riwayat chat.",
       );
     }
-    throw new Error(
-      "Tidak ada chat ditemukan. Pastikan WhatsApp sudah ready dan ada riwayat chat.",
-    );
-  }
 
-  chats.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-  return chats;
+    chats.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    return chats;
+  });
 }
 
 export async function fetchMessagesFromStore(
@@ -402,35 +415,37 @@ export async function fetchMessagesFromStore(
   messages: StoreMessage[];
   loadedCount: number;
 }> {
-  try {
-    await Promise.race([
-      whatsAppClient.syncHistory(chatId),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("syncHistory timeout")), 15000),
-      ),
-    ]);
-    console.info(`[WA Store] syncHistory ok for ${chatId}`);
-  } catch (err) {
-    console.warn(`[WA Store] syncHistory skipped for ${chatId}:`, err);
-  }
+  return withStoreLock(async () => {
+    try {
+      await Promise.race([
+        whatsAppClient.syncHistory(chatId),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("syncHistory timeout")), 15000),
+        ),
+      ]);
+      console.info(`[WA Store] syncHistory ok for ${chatId}`);
+    } catch (err) {
+      console.warn(`[WA Store] syncHistory skipped for ${chatId}:`, err);
+    }
 
-  const pupPage = getPupPage();
-  const result = await pupPage.evaluate(
-    fetchMessagesInBrowser as (...args: unknown[]) => ReturnType<
-      typeof fetchMessagesFromStore
-    >,
-    chatId,
-    limit,
-  );
+    const pupPage = getPupPage();
+    const result = await pupPage.evaluate(
+      fetchMessagesInBrowser as (...args: unknown[]) => ReturnType<
+        typeof fetchMessagesFromStore
+      >,
+      chatId,
+      limit,
+    );
 
-  const typed = result as Awaited<ReturnType<typeof fetchMessagesFromStore>>;
-  if (typed.messages?.length) {
-    typed.messages = typed.messages
-      .map(sanitizeStoreMessage)
-      .filter(isDisplayableStoreMessage);
-    typed.loadedCount = typed.messages.length;
-  }
-  return typed;
+    const typed = result as Awaited<ReturnType<typeof fetchMessagesFromStore>>;
+    if (typed.messages?.length) {
+      typed.messages = typed.messages
+        .map(sanitizeStoreMessage)
+        .filter(isDisplayableStoreMessage);
+      typed.loadedCount = typed.messages.length;
+    }
+    return typed;
+  });
 }
 
 export interface MessageMediaResult {
@@ -447,18 +462,20 @@ export interface MessageMediaResult {
 export async function downloadMessageMediaFromStore(
   messageId: string,
 ): Promise<MessageMediaResult> {
-  const pupPage = getPupPage();
-  const raw = (await pupPage.evaluate(
-    downloadMessageMediaInBrowser as (...args: unknown[]) => unknown,
-    messageId,
-  )) as MessageMediaResult;
+  return withStoreLock(async () => {
+    const pupPage = getPupPage();
+    const raw = (await pupPage.evaluate(
+      downloadMessageMediaInBrowser as (...args: unknown[]) => unknown,
+      messageId,
+    )) as MessageMediaResult;
 
-  if (raw.ok && raw.data && raw.mimetype) {
-    return {
-      ...raw,
-      dataUrl: `data:${raw.mimetype};base64,${raw.data}`,
-    };
-  }
+    if (raw.ok && raw.data && raw.mimetype) {
+      return {
+        ...raw,
+        dataUrl: `data:${raw.mimetype};base64,${raw.data}`,
+      };
+    }
 
-  return raw;
+    return raw;
+  });
 }

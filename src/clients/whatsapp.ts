@@ -63,6 +63,7 @@ function createClient(): Client {
       userDataDir: AUTH_DIR,
       executablePath: process.env.BROWSER_PATH,
       timeout: 120000,
+      protocolTimeout: 300000,
     },
   });
 }
