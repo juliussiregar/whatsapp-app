@@ -15,6 +15,14 @@ services:
       - whatsapp-session:/app/.wwebjs_auth
       - whatsapp-cache:/app/.wwebjs_cache
     restart: unless-stopped
+    networks:
+      - default
+      - erp-integration
+
+networks:
+  erp-integration:
+    name: erp-whatsapp-net
+    driver: bridge
 
 volumes:
   whatsapp-session:
