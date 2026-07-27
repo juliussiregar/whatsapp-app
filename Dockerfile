@@ -67,7 +67,7 @@ RUN mkdir -p .wwebjs_auth .wwebjs_cache && \
 USER node
 
 # Expose port
-EXPOSE 3000
+EXPOSE 3040
 
 # Start the application
 CMD ["npm", "start"]

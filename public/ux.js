@@ -252,7 +252,6 @@ export function initBottomNav() {
   const items = [
     { href: "/app", label: "Koneksi", icon: "⚡" },
     { href: "/app/groups", label: "Grup", icon: "👥" },
-    { href: "/app/group-manage", label: "Kelola", icon: "➕" },
     { href: "/app/personal", label: "Pribadi", icon: "💬" },
     { href: "/app/send", label: "Kirim", icon: "✉️" },
   ];

@@ -10,7 +10,6 @@ import { promises as fs } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { formatPhoneNumber, getValidatedContact } from '@/services/phone.service.js'
-import { registerGroupManagementRoutes } from '@/routes/group-management.routes.js'
 import {
   ErrorSchema,
   StatusSchema,
@@ -840,7 +839,5 @@ whatsapp.openapi(resetRoute, async (c) => {
     return c.json({ success: false, error: 'Failed to reset service', details: error instanceof Error ? error.message : String(error) }, 500)
   }
 })
-
-registerGroupManagementRoutes(whatsapp)
 
 export default whatsapp

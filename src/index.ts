@@ -21,7 +21,6 @@ app.get("/app", serveStatic({ root: publicDir, path: "index.html" }));
 app.get("/app/groups", serveStatic({ root: publicDir, path: "groups.html" }));
 app.get("/app/personal", serveStatic({ root: publicDir, path: "personal.html" }));
 app.get("/app/send", serveStatic({ root: publicDir, path: "send.html" }));
-app.get("/app/group-manage", serveStatic({ root: publicDir, path: "group-manage.html" }));
 app.use(
   "/app/*",
   serveStatic({
@@ -69,7 +68,7 @@ Gunakan endpoint \`GET /whatsapp/groups\` untuk mendapatkan daftar group ID.`,
 // Serve Swagger UI
 app.get("/docs", swaggerUI({ url: "/doc" }));
 
-const port = Number(process.env.PORT) || 3000;
+const port = Number(process.env.PORT) || 3040;
 
 // Initialize WhatsApp client
 initWhatsApp().catch((error) => {

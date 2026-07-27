@@ -42,9 +42,6 @@ export const API = {
   messageMedia: "/whatsapp/message-media",
   sendMessage: "/whatsapp/send-message",
   sendGroupMessage: "/whatsapp/send-group-message",
-  createGroup: "/whatsapp/groups/create",
-  addGroupParticipants: "/whatsapp/groups/add-participants",
-  deleteGroup: "/whatsapp/groups/delete",
 };
 
 export const STATUS_POLL_MS = 3000;
@@ -88,7 +85,6 @@ export function initNavigation() {
     const active =
       path === href ||
       (href === "/app/groups" && path === "/app/groups") ||
-      (href === "/app/group-manage" && path.startsWith("/app/group-manage")) ||
       (href === "/app/personal" && path.startsWith("/app/personal")) ||
       (href === "/app/send" && path.startsWith("/app/send"));
     link.classList.toggle("sidebar-nav__link--active", active);

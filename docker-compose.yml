@@ -1,28 +1,19 @@
 services:
-  whatsapp-bot:
+  whatsapp-api:
     build: .
-    container_name: so-whatsapp-bot
+    container_name: simple-whatsapp-api
     ports:
-      - "3001:3000"
+      - "3040:3040"
     environment:
-      - PORT=3000
+      - PORT=3040
       - NODE_ENV=production
       - BROWSER_PATH=/usr/bin/chromium
       - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
     volumes:
-      # Persist WhatsApp session data
       - whatsapp-session:/app/.wwebjs_auth
       - whatsapp-cache:/app/.wwebjs_cache
     restart: unless-stopped
-    networks:
-      - default
-      - erp-integration
-
-networks:
-  erp-integration:
-    name: erp-whatsapp-net
-    driver: bridge
 
 volumes:
   whatsapp-session:
