@@ -1,3 +1,4 @@
+import "dotenv/config";
 import path from "path";
 import { fileURLToPath } from "url";
 import { OpenAPIHono } from "@hono/zod-openapi";
@@ -6,7 +7,35 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import health from "@/routes/health.js";
 import whatsapp from "@/routes/whatsapp.js";
-import { init as initWhatsApp } from "@/clients/whatsapp.js";
+import {
+  init as initWhatsApp,
+  setInboundMessageHandler,
+} from "@/clients/whatsapp.js";
+import { handleInboundMessage } from "@/bot/inbound.js";
+import { isSolidPaceBotEnabled, validateSolidPaceBotEnv } from "@/config.js";
+
+process.on("uncaughtException", (err) => {
+  console.error("uncaughtException:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("unhandledRejection:", reason);
+});
+
+try {
+  validateSolidPaceBotEnv();
+} catch (err) {
+  console.error("[SolidPace Bot] Konfigurasi env tidak valid:", err);
+  process.exit(1);
+}
+
+if (isSolidPaceBotEnabled()) {
+  setInboundMessageHandler(handleInboundMessage);
+  console.info("[SolidPace Bot] inbound handler enabled");
+} else {
+  console.info("[SolidPace Bot] disabled (SOLIDPACE_BOT_ENABLED=false)");
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "..", "public");
@@ -39,14 +68,14 @@ app.get("/", (c) => {
 app.doc("/doc", {
   openapi: "3.0.0",
   info: {
-    title: "Simple WhatsApp API",
+    title: "SolidPace Bot",
     version: "1.0.0",
-    description: `REST API untuk mengirim pesan WhatsApp menggunakan whatsapp-web.js.
+    description: `Bot WhatsApp SolidPace + REST API (whatsapp-web.js).
 
 ## Cara Penggunaan
 1. Buka dashboard web di \`/app\` untuk scan QR dan kirim pesan
 2. Pastikan status client sudah **ready** dengan mengecek endpoint \`GET /whatsapp/status\`
-3. Setelah ready, Anda bisa mulai mengirim pesan
+3. Setelah ready, Anda bisa mulai mengirim pesan / memakai bot nutrisi
 
 ## Format Nomor Telepon
 - \`08xxxxxxxxxx\` → otomatis dikonversi ke \`628xxxxxxxxxx\`
@@ -69,7 +98,7 @@ Gunakan endpoint \`GET /whatsapp/groups\` untuk mendapatkan daftar group ID.`,
 // Serve Swagger UI
 app.get("/docs", swaggerUI({ url: "/doc" }));
 
-const port = Number(process.env.PORT) || 3000;
+const port = Number(process.env.PORT) || 3044;
 
 // Initialize WhatsApp client
 initWhatsApp().catch((error) => {

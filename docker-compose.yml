@@ -1,29 +1,22 @@
 services:
-  whatsapp-bot:
+  solidpace-bot:
     build: .
-    container_name: so-whatsapp-bot
+    container_name: solidpace-bot
     ports:
-      - "3001:3000"
+      - "3044:3044"
     environment:
-      - PORT=3000
+      - PORT=3044
       - NODE_ENV=production
       - BROWSER_PATH=/usr/bin/chromium
       - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+    env_file:
+      - .env
     volumes:
-      # Persist WhatsApp session data
-      - whatsapp-session:/app/.wwebjs_auth
-      - whatsapp-cache:/app/.wwebjs_cache
+      - solidpace-session:/app/.wwebjs_auth
+      - solidpace-cache:/app/.wwebjs_cache
     restart: unless-stopped
-    networks:
-      - default
-      - erp-integration
-
-networks:
-  erp-integration:
-    name: erp-whatsapp-net
-    driver: bridge
 
 volumes:
-  whatsapp-session:
-  whatsapp-cache:
+  solidpace-session:
+  solidpace-cache:

@@ -3,6 +3,7 @@ import { whatsAppClient } from "@/clients/whatsapp.js";
 import fetchMessagesInBrowser from "../injected/fetch-messages.browser.js";
 import fetchGroupsInBrowser from "../injected/fetch-groups.browser.js";
 import downloadMessageMediaInBrowser from "../injected/download-message-media.browser.js";
+import downloadLatestChatImageInBrowser from "../injected/download-latest-chat-image.browser.js";
 
 export type ChatFilter = "all" | "personal" | "group";
 
@@ -467,6 +468,29 @@ export async function downloadMessageMediaFromStore(
     const raw = (await pupPage.evaluate(
       downloadMessageMediaInBrowser as (...args: unknown[]) => unknown,
       messageId,
+    )) as MessageMediaResult;
+
+    if (raw.ok && raw.data && raw.mimetype) {
+      return {
+        ...raw,
+        dataUrl: `data:${raw.mimetype};base64,${raw.data}`,
+      };
+    }
+
+    return raw;
+  });
+}
+
+export async function downloadLatestChatImageFromStore(
+  chatId: string,
+  aroundTimestamp?: number | null,
+): Promise<MessageMediaResult> {
+  return withStoreLock(async () => {
+    const pupPage = getPupPage();
+    const raw = (await pupPage.evaluate(
+      downloadLatestChatImageInBrowser as (...args: unknown[]) => unknown,
+      chatId,
+      aroundTimestamp ?? null,
     )) as MessageMediaResult;
 
     if (raw.ok && raw.data && raw.mimetype) {

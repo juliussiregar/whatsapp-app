@@ -23,12 +23,20 @@ lib/
 .serverless/
 .vercel/project.json
 
-# Environment
+# Environment (keep .env.example tracked)
 .env
 .env.*.local
 .env.local
 .env.test
 .env.production
+!.env.example
+
+# Local runtime data (SQLite, WA session exports, branch experiments)
+data/
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
 
 # Logs
 logs/

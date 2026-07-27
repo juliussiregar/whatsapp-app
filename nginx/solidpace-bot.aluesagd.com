@@ -1,12 +1,12 @@
 server {
 
-    server_name whatsapp-simfan.aluesagd.com;
+    server_name solidpace-bot.aluesagd.com;
 
     # Batas upload request body
     client_max_body_size 20M;
 
     location / {
-        proxy_pass http://127.0.0.1:3001;
+        proxy_pass http://127.0.0.1:3044;
 
         proxy_http_version 1.1;
         proxy_set_header Host $host;

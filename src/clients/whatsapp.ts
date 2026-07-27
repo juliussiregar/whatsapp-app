@@ -1,7 +1,16 @@
 import { promises as fs } from "fs";
-import { Client } from "whatsapp-web.js";
+import { Client, type Message } from "whatsapp-web.js";
 import qrCode from "qrcode-terminal";
 import QRCode from "qrcode";
+import { waLogTrace } from "@/bot/waLog.js";
+
+type InboundHandler = (message: Message) => void | Promise<void>;
+
+let inboundMessageHandler: InboundHandler | undefined;
+
+function setInboundMessageHandler(handler: InboundHandler | undefined): void {
+  inboundMessageHandler = handler;
+}
 
 const AUTH_DIR = "./.wwebjs_auth";
 
@@ -173,6 +182,14 @@ function attachListeners(client: Client) {
   });
 
   client.on("message", async (message) => {
+    waLogTrace("client_message_raw", {
+      from: message.from,
+      fromMe: message.fromMe,
+      type: message.type,
+      hasMedia: Boolean(message.hasMedia),
+      preview: (message.body ?? "").slice(0, 72),
+    });
+
     try {
       await client.sendSeen(message.from);
     } catch (error: any) {
@@ -186,6 +203,14 @@ function attachListeners(client: Client) {
           `Error marking message as seen for ${message.from}:`,
           error,
         );
+      }
+    }
+
+    if (inboundMessageHandler && !message.fromMe) {
+      try {
+        await inboundMessageHandler(message);
+      } catch (err) {
+        console.error("Inbound message handler error:", err);
       }
     }
   });
@@ -338,5 +363,14 @@ async function getQr(): Promise<QrInfo> {
   };
 }
 
-export { whatsAppClient, init, reconnect, logoutSession, isReady, getStatus, getQr };
+export {
+  whatsAppClient,
+  init,
+  reconnect,
+  logoutSession,
+  isReady,
+  getStatus,
+  getQr,
+  setInboundMessageHandler,
+};
 export type { ClientState, ClientStatus, QrInfo };

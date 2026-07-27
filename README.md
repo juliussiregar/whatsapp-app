@@ -1,6 +1,6 @@
-# Temporary WhatsApp Service
+# SolidPace Bot
 
-A lightweight REST API service built with Hono.js that enables us to send WhatsApp messages programmatically using WhatsApp Web. Perfect for temporary messaging needs, notifications, or testing purposes.
+WhatsApp bot untuk SolidPace — catat asupan makanan atlet lewat chat, plus REST API WhatsApp Web.
 
 ## Tech Stack
 
@@ -23,7 +23,7 @@ A lightweight REST API service built with Hono.js that enables us to send WhatsA
 1. Clone the repository
 ```bash
 git clone <repository-url>
-cd so-whatsapp-bot
+cd solidpace-bot
 ```
 
 2. Install dependencies
@@ -39,7 +39,7 @@ cp .env.example .env
 4. Set the browser path in `.env` (optional if Chromium is in PATH)
 ```env
 BROWSER_PATH=/path/to/chromium
-PORT=3000
+PORT=3044
 ```
 
 5. Run in development mode
@@ -47,7 +47,7 @@ PORT=3000
 npm run dev
 ```
 
-6. Open **http://localhost:3000/app** to scan the QR code (or use the terminal/Docker logs)
+6. Open **http://localhost:3044/app** to scan the QR code (or use the terminal/Docker logs)
 
 ### Docker Deployment
 
@@ -57,9 +57,9 @@ The easiest way to run this service is using Docker, which comes with Chromium p
 # Build and start the service
 docker-compose up -d
 
-# Open dashboard (QR scan + send message) at http://localhost:3001/app
+# Open dashboard (QR scan + send message) at http://localhost:3044/app
 # Or view logs for QR in terminal (first time only)
-docker-compose logs -f whatsapp-bot
+docker-compose logs -f solidpace-bot
 
 # Stop the service
 docker-compose down
@@ -95,7 +95,7 @@ Content-Type: application/json
 ```json
 {
   "phoneNumber": "08123456789",
-  "message": "Hello from Temporary WhatsApp Service!"
+  "message": "Hello from SolidPace Bot!"
 }
 ```
 
@@ -126,7 +126,7 @@ Content-Type: application/json
 ### Using cURL
 
 ```bash
-curl -X POST http://localhost:3000/whatsapp/send-message \
+curl -X POST http://localhost:3044/whatsapp/send-message \
   -H "Content-Type: application/json" \
   -d '{
     "phoneNumber": "08123456789",
@@ -137,7 +137,7 @@ curl -X POST http://localhost:3000/whatsapp/send-message \
 ### Using JavaScript/TypeScript
 
 ```typescript
-const response = await fetch('http://localhost:3000/whatsapp/send-message', {
+const response = await fetch('http://localhost:3044/whatsapp/send-message', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -158,7 +158,7 @@ console.log(result);
 import requests
 
 response = requests.post(
-    'http://localhost:3000/whatsapp/send-message',
+    'http://localhost:3044/whatsapp/send-message',
     json={
         'phoneNumber': '08123456789',
         'message': 'Hello from Python!'
@@ -171,7 +171,7 @@ print(response.json())
 ## Project Structure
 
 ```
-so-whatsapp-bot/
+solidpace-bot/
 ├── src/
 │   ├── clients/
 │   │   └── whatsapp.ts      # WhatsApp client initialization
@@ -206,12 +206,12 @@ npm start
 
 ```bash
 # Build the image
-docker build -t temporary-whatsapp-service .
+docker build -t solidpace-bot .
 
 # Run the container
-docker run -p 3000:3000 \
-  -v whatsapp-session:/app/.wwebjs_auth \
-  temporary-whatsapp-service
+docker run -p 3044:3044 \
+  -v solidpace-session:/app/.wwebjs_auth \
+  solidpace-bot
 ```
 
 ## Configuration
@@ -220,13 +220,13 @@ docker run -p 3000:3000 \
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PORT` | Server port | `3000` |
+| `PORT` | Server port | `3044` |
 | `BROWSER_PATH` | Path to Chromium/Chrome executable | Auto-detected |
 | `NODE_ENV` | Environment (development/production) | `development` |
 
 ## Web Dashboard (Phase 1)
 
-Buka **http://localhost:3000/app** (atau port Docker Anda, mis. `3001`) untuk:
+Buka **http://localhost:3044/app** untuk:
 
 | Halaman | URL | Fungsi |
 |---------|-----|--------|
@@ -236,6 +236,49 @@ Buka **http://localhost:3000/app** (atau port Docker Anda, mis. `3001`) untuk:
 | Kirim cepat | `/app/send` | Kirim ke nomor baru tanpa buka riwayat |
 
 Menu navigasi di sidebar mengarah ke masing-masing halaman. Halaman chat otomatis mengarahkan ke `/app` jika WhatsApp belum **ready**.
+
+## SolidPace Nutrition Bot
+
+Bot WhatsApp untuk atlet SolidPace — catat asupan makanan lewat chat pribadi.
+
+### Fitur
+
+- **Teks bebas** — contoh: `nasi ayam 300gr dinner`
+- **Foto makanan** — analisis AI (`save=false`) lalu konfirmasi sebelum simpan
+- **Kategori otomatis** — berdasarkan jam WIB atau kata kunci di pesan (sarapan/siang/snack/malam)
+- Upload aktivitas `.fit/.tcx/.gpx` **belum didukung** lewat WhatsApp
+
+### Environment
+
+| Variable | Wajib | Deskripsi |
+|----------|-------|-----------|
+| `SOLIDPACE_BOT_ENABLED` | | `true` / `false` (default: `true`) |
+| `WHATSAPP_BOT_API_KEY` | ✓ | API key SolidPace Integration |
+| `SOLIDPACE_API_BASE_URL` | | Default: `https://api-solid.aluesagd.com/api/v1` |
+| `OPENAI_API_KEY` | ✓ | Ekstraksi teks makanan bebas |
+| `OPENAI_MODEL_FAST` | | Model OpenAI (default: `gpt-4.1-mini`) |
+| `SOLIDPACE_FETCH_TIMEOUT_MS` | | Timeout HTTP ke SolidPace (default: `30000`) |
+
+Salin dari `.env.example`, lalu jalankan:
+
+```bash
+npm run dev
+```
+
+Kirim `help` ke nomor bot setelah status **ready**.
+
+### Alur chat
+
+1. User kirim teks/foto makanan
+2. Bot lookup nomor di SolidPace (404 → hubungi admin)
+3. Bot tampilkan ringkasan nutrisi
+4. User balas `ya` untuk simpan, `batal` untuk batalkan
+
+### Testing
+
+```bash
+npm test
+```
 
 | Endpoint | Deskripsi |
 |----------|-----------|
