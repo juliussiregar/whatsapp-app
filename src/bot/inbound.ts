@@ -1,7 +1,14 @@
 import type { Message } from "whatsapp-web.js";
-import { pickCategory, formatWibClock } from "@/bot/category.js";
+import { pickCategory } from "@/bot/category.js";
 import { isCasualGreeting, isConfirmNo, isConfirmYes, isMenuCommand } from "@/bot/commands.js";
 import { extractFoodCorrection, extractFoodFromText, mergeFoodCorrection } from "@/bot/extractFood.js";
+import {
+  formatFoodSummary,
+  formatSaved,
+  foodDisplayNameFromItems,
+  PHOTO_GUIDELINES,
+  PHOTO_GUIDELINES_SHORT,
+} from "@/bot/formatFood.js";
 import {
   foodImageMimeErrorMessage,
   isAllowedFoodImageMime,
@@ -24,6 +31,7 @@ import {
   SolidPaceApiError,
   analyzeFoodImage,
   logFood,
+  parseFoodAnalysisItems,
   resolveUserByPhone,
   type SolidPaceUser,
 } from "@/clients/solidpace.js";
@@ -43,6 +51,8 @@ Contoh:
 
 *2. Melaporkan makanan lewat foto*
 Kalau Anda belum tahu perkiraan kalori atau porsinya, cukup kirim *foto makanan*. Bot akan bantu analisis dulu, lalu tampilkan ringkasannya sebelum disimpan.
+
+${PHOTO_GUIDELINES}
 
 Contoh:
 • Kirim foto makanan
@@ -82,52 +92,6 @@ async function safeReply(message: Message, text: string, ctx = "inbound"): Promi
       });
     }
   }
-}
-
-function aiEstimateNote(draft: FoodDraft): string {
-  if (draft.source === "image") {
-    return [
-      "ℹ️ *Catatan:* angka di atas adalah *perkiraan AI* dari analisis foto (SolidPace).",
-      "Kalau kurang tepat, kirim koreksi singkat, contoh:",
-      "_300 kcal_ · _250gr_ · _tadi pagi_ · _bubur ayam 250gr 320 kcal_",
-    ].join("\n");
-  }
-  return [
-    "ℹ️ *Catatan:* angka di atas adalah *perkiraan AI Bot SolidPace*, bukan data pasti dari database.",
-    "Kalau salah, kirim koreksi singkat, contoh:",
-    "_300 kcal_ · _250gr_ · _tadi pagi_ · _bubur ayam 250gr 320 kcal_",
-  ].join("\n");
-}
-
-function formatFoodSummary(draft: FoodDraft): string {
-  const lines = [
-    "*📋 Ringkasan makanan*",
-    `🍽 ${draft.food_name}`,
-    `⚖️ ${draft.serving} ${draft.suffix_serving}`,
-    `🔥 ${draft.calories} kcal · 🥩 P ${draft.protein}g · 🧈 F ${draft.fat}g`,
-    `🏷 Kategori: *${draft.category_name}* (jam WIB ${formatWibClock()})`,
-    "",
-    aiEstimateNote(draft),
-  ];
-  if (draft.disclaimer) {
-    lines.push("", `💬 ${draft.disclaimer}`);
-  }
-  lines.push(
-    "",
-    "Balas *ya* untuk menyimpan, atau *batal* untuk membatalkan.",
-  );
-  return lines.join("\n");
-}
-
-function formatSaved(draft: FoodDraft, fullName?: string): string {
-  const who = fullName ? `, ${fullName}` : "";
-  return [
-    `✅ Tersimpan${who}!`,
-    `🍽 ${draft.food_name} · ${draft.serving}${draft.suffix_serving}`,
-    `🔥 ${draft.calories} kcal · *${draft.category_name}*`,
-    "",
-    "Kirim makanan/foto berikutnya, atau ketik *help*.",
-  ].join("\n");
 }
 
 function mapApiError(e: unknown): string {
@@ -199,9 +163,10 @@ function draftFromTotals(
   category: { category_id: number; name: string },
   source: FoodDraft["source"],
   disclaimer?: string,
+  items?: FoodDraft["items"],
 ): FoodDraft {
   return {
-    food_name: totals.food_name,
+    food_name: foodDisplayNameFromItems(items, totals.food_name),
     serving: totals.serving,
     suffix_serving: totals.suffix_serving ?? "gr",
     calories: totals.calories,
@@ -211,6 +176,7 @@ function draftFromTotals(
     category_name: category.name,
     source,
     disclaimer,
+    items,
   };
 }
 
@@ -359,7 +325,7 @@ async function handleFoodText(
   const fat = Math.max(0, extracted.fat ?? 0);
   const protein = Math.max(0, extracted.protein ?? 0);
 
-  const category = pickCategory(user.categories, extracted.category_hint);
+  const category = pickCategory(user.categories, extracted.category_hint, extracted.food_name);
   if (!category) {
     await safeReply(
       message,
@@ -421,13 +387,11 @@ async function handleFoodImage(
     });
     await safeReply(
       message,
-      "⚠️ Gagal mengunduh foto. Tunggu beberapa detik lalu kirim ulang.",
+      "⚠️ Gagal mengunduh foto. Tunggu beberapa detik lalu kirim ulang.\n\n" + PHOTO_GUIDELINES_SHORT,
       "download_fail",
     );
     return;
   }
-
-  await safeReply(message, "📸 Menganalisis foto makanan…", "analyze_busy");
 
   const base64 = media.data.replace(/^data:image\/\w+;base64,/, "");
   const buffer = Buffer.from(base64, "base64");
@@ -439,6 +403,12 @@ async function handleFoodImage(
     await safeReply(message, foodImageMimeErrorMessage(), "unsupported_image_mime");
     return;
   }
+
+  await safeReply(
+    message,
+    ["📸 Menganalisis foto makanan…", "", PHOTO_GUIDELINES_SHORT].join("\n"),
+    "analyze_busy",
+  );
 
   try {
     const result = await analyzeFoodImage({
@@ -454,13 +424,31 @@ async function handleFoodImage(
     if (!totals?.food_name) {
       await safeReply(
         message,
-        "⚠️ Foto tidak dikenali sebagai makanan. Coba foto yang lebih jelas, atau tulis makanannya.",
+        [
+          "⚠️ Foto tidak dikenali sebagai makanan. Coba foto yang lebih jelas, atau tulis makanannya.",
+          "",
+          PHOTO_GUIDELINES,
+        ].join("\n"),
         "analyze_empty",
       );
       return;
     }
 
-    const category = pickCategory(user.categories, portionHint);
+    const items = parseFoodAnalysisItems(result.analysis.items).map((item) => ({
+      food_name: item.food_name,
+      serving: item.serving > 0 ? item.serving : 0,
+      suffix_serving: item.suffix_serving ?? "gr",
+      calories: item.calories,
+      fat: item.fat,
+      protein: item.protein,
+    }));
+
+    const displayName = foodDisplayNameFromItems(
+      items.length ? items : undefined,
+      totals.food_name,
+    );
+    const category = pickCategory(user.categories, portionHint, displayName);
+
     if (!category) {
       await safeReply(
         message,
@@ -474,6 +462,7 @@ async function handleFoodImage(
       {
         food_name: totals.food_name,
         serving: totals.serving > 0 ? totals.serving : 100,
+        suffix_serving: totals.suffix_serving,
         calories: Math.max(0, totals.calories ?? 0),
         fat: Math.max(0, totals.fat ?? 0),
         protein: Math.max(0, totals.protein ?? 0),
@@ -481,6 +470,7 @@ async function handleFoodImage(
       category,
       "image",
       result.analysis.disclaimer,
+      items.length ? items : undefined,
     );
 
     session.state = { kind: "pending_confirm", draft };
@@ -534,7 +524,7 @@ export async function handleInboundMessage(message: Message): Promise<void> {
     return;
   }
 
-  if (isTextOnly && isConfirmNo(cmd)) {
+  if (isTextOnly && isConfirmNo(cmd, { allowPrefix: session.state.kind === "pending_confirm" })) {
     if (session.state.kind === "pending_confirm") {
       resetSession(key);
       await safeReply(message, "❌ Dibatalkan. Kirim makanan/foto baru, atau ketik *help*.", "cancelled");
@@ -595,7 +585,7 @@ export async function handleInboundMessage(message: Message): Promise<void> {
   }
 
   // Konfirmasi hanya untuk pesan teks tanpa media
-  if (isTextOnly && isConfirmYes(cmd)) {
+  if (isTextOnly && isConfirmYes(cmd, { allowPrefix: session.state.kind === "pending_confirm" })) {
     if (session.state.kind === "pending_confirm") {
       if (!session.fullName) {
         await ensureUser(message, session, phone, key);

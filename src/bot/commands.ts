@@ -59,27 +59,33 @@ function firstToken(cmd: string): string {
   return normalizeCmd(t);
 }
 
-function matchesWord(cmd: string, words: string[]): boolean {
+type MatchWordOpts = {
+  /** Izinkan cocokkan kata pertama saja, mis. `iya dong` → `iya`. */
+  allowPrefix?: boolean;
+};
+
+function matchesWord(cmd: string, words: string[], opts?: MatchWordOpts): boolean {
   const normalized = normalizeCmd(cmd);
   if (!normalized) return false;
   if (words.includes(normalized)) return true;
+  if (!opts?.allowPrefix) return false;
   const token = firstToken(normalized);
   return words.includes(token);
 }
 
 export function isMenuCommand(cmd: string): boolean {
-  return matchesWord(cmd, MENU_WORDS);
+  return matchesWord(cmd, MENU_WORDS, { allowPrefix: true });
 }
 
-export function isConfirmYes(cmd: string): boolean {
-  return matchesWord(cmd, CONFIRM_YES_WORDS);
+export function isConfirmYes(cmd: string, opts?: MatchWordOpts): boolean {
+  return matchesWord(cmd, CONFIRM_YES_WORDS, opts);
 }
 
-export function isConfirmNo(cmd: string): boolean {
-  return matchesWord(cmd, CONFIRM_NO_WORDS);
+export function isConfirmNo(cmd: string, opts?: MatchWordOpts): boolean {
+  return matchesWord(cmd, CONFIRM_NO_WORDS, opts);
 }
 
 /** Sapaan ringan saat tidak ada draft — mis. `ya`, `oke` tanpa konteks konfirmasi. */
 export function isCasualGreeting(cmd: string): boolean {
-  return matchesWord(cmd, ["ya", "iya", "iy", "ok", "oke"]);
+  return matchesWord(cmd, ["ya", "iya", "iy", "ok", "oke"], { allowPrefix: true });
 }

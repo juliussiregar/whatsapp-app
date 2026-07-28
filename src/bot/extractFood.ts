@@ -198,7 +198,15 @@ export function parseQuickCorrection(text: string): FoodCorrection | null {
 }
 
 export function mergeFoodCorrection(draft: FoodDraft, patch: FoodCorrection): FoodDraft {
-  return {
+  const touchesBreakdown =
+    patch.food_name != null ||
+    patch.serving != null ||
+    patch.suffix_serving != null ||
+    patch.calories != null ||
+    patch.fat != null ||
+    patch.protein != null;
+
+  const merged: FoodDraft = {
     ...draft,
     food_name: patch.food_name ?? draft.food_name,
     serving: patch.serving != null && patch.serving > 0 ? patch.serving : draft.serving,
@@ -208,6 +216,12 @@ export function mergeFoodCorrection(draft: FoodDraft, patch: FoodCorrection): Fo
     protein: patch.protein != null && patch.protein >= 0 ? patch.protein : draft.protein,
     disclaimer: patch.notes ?? draft.disclaimer,
   };
+
+  if (draft.items?.length && touchesBreakdown) {
+    merged.items = undefined;
+  }
+
+  return merged;
 }
 
 export async function extractFoodFromText(text: string): Promise<ExtractedFood> {

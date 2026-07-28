@@ -15,8 +15,13 @@ describe("mealSlotFromWib", () => {
     assert.equal(slot, "breakfast");
   });
 
-  it("maps afternoon to snack window", () => {
+  it("maps mid afternoon to lunch", () => {
     const slot = mealSlotFromWib(new Date("2026-07-01T08:30:00.000Z")); // 15:30 WIB
+    assert.equal(slot, "lunch");
+  });
+
+  it("maps late afternoon to snack window", () => {
+    const slot = mealSlotFromWib(new Date("2026-07-01T10:00:00.000Z")); // 17:00 WIB
     assert.equal(slot, "snack");
   });
 });
@@ -30,5 +35,10 @@ describe("pickCategory", () => {
   it("matches snack category", () => {
     const picked = pickCategory(categories, "cemilan");
     assert.equal(picked?.category_id, 4);
+  });
+
+  it("uses meal words in food name when no hint", () => {
+    const picked = pickCategory(categories, null, "Sarapan telur orak-arik dan roti");
+    assert.equal(picked?.category_id, 1);
   });
 });

@@ -20,8 +20,8 @@ export function mealSlotFromWib(date = new Date()): MealSlot {
   );
 
   if (hour >= 5 && hour < 11) return "breakfast";
-  if (hour >= 11 && hour < 15) return "lunch";
-  if (hour >= 15 && hour < 18) return "snack";
+  if (hour >= 11 && hour < 16) return "lunch";
+  if (hour >= 16 && hour < 18) return "snack";
   return "dinner";
 }
 
@@ -43,11 +43,12 @@ function categoryMatchesSlot(cat: NutritionCategory, slot: MealSlot): boolean {
 
 /**
  * Pilih category_id dari daftar user.
- * Prioritas: hint dari teks user → jam WIB → kategori pertama.
+ * Prioritas: hint teks user → kata kunci di nama makanan → jam WIB → kategori pertama.
  */
 export function pickCategory(
   categories: NutritionCategory[],
   hint?: string | null,
+  foodName?: string | null,
 ): NutritionCategory | null {
   if (!categories.length) return null;
 
@@ -55,6 +56,12 @@ export function pickCategory(
   if (hintSlot) {
     const byHint = categories.find((c) => categoryMatchesSlot(c, hintSlot));
     if (byHint) return byHint;
+  }
+
+  const foodSlot = normalizeMealSlot(foodName);
+  if (foodSlot) {
+    const byFood = categories.find((c) => categoryMatchesSlot(c, foodSlot));
+    if (byFood) return byFood;
   }
 
   const wibSlot = mealSlotFromWib();

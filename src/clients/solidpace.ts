@@ -46,19 +46,54 @@ export type FoodLogResult = {
 export type FoodAnalysisTotals = {
   food_name: string;
   serving: number;
+  suffix_serving?: string;
   calories: number;
   fat: number;
   protein: number;
 };
 
+export type FoodAnalysisItem = {
+  food_name: string;
+  serving: number;
+  suffix_serving?: string;
+  calories: number;
+  fat: number;
+  protein: number;
+  confidence?: number;
+  notes?: string;
+};
+
 export type FoodAnalysisResult = {
   analysis: {
-    items?: unknown[];
+    items?: FoodAnalysisItem[];
     totals: FoodAnalysisTotals;
+    analysis_summary?: string;
     disclaimer?: string;
   };
   saved: FoodLogResult | null;
 };
+
+export function parseFoodAnalysisItems(raw: unknown): FoodAnalysisItem[] {
+  if (!Array.isArray(raw)) return [];
+  const items: FoodAnalysisItem[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const o = entry as Record<string, unknown>;
+    const food_name = typeof o.food_name === "string" ? o.food_name.trim() : "";
+    if (!food_name) continue;
+    items.push({
+      food_name,
+      serving: typeof o.serving === "number" && o.serving > 0 ? o.serving : 0,
+      suffix_serving: typeof o.suffix_serving === "string" ? o.suffix_serving : "gr",
+      calories: typeof o.calories === "number" ? Math.max(0, o.calories) : 0,
+      fat: typeof o.fat === "number" ? Math.max(0, o.fat) : 0,
+      protein: typeof o.protein === "number" ? Math.max(0, o.protein) : 0,
+      confidence: typeof o.confidence === "number" ? o.confidence : undefined,
+      notes: typeof o.notes === "string" ? o.notes : undefined,
+    });
+  }
+  return items;
+}
 
 export class SolidPaceApiError extends Error {
   readonly status: number;

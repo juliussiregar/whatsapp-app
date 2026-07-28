@@ -1,3 +1,12 @@
+export type FoodDraftItem = {
+  food_name: string;
+  serving: number;
+  suffix_serving: string;
+  calories: number;
+  fat: number;
+  protein: number;
+};
+
 export type FoodDraft = {
   food_name: string;
   serving: number;
@@ -9,6 +18,8 @@ export type FoodDraft = {
   category_name: string;
   source: "text" | "image";
   disclaimer?: string;
+  /** Breakdown per item dari analisis foto (jika ada). */
+  items?: FoodDraftItem[];
 };
 
 export type SessionState =

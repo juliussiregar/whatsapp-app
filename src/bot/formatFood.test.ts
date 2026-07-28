@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { formatFoodSummary, foodDisplayNameFromItems, PHOTO_GUIDELINES } from "./formatFood.js";
+import { parseFoodAnalysisItems } from "@/clients/solidpace.js";
+import type { FoodDraft } from "./session.js";
+
+const baseDraft: FoodDraft = {
+  food_name: "Sate kambing, Lontong, Soto kuning",
+  serving: 350,
+  suffix_serving: "gr",
+  calories: 700,
+  fat: 35.5,
+  protein: 39,
+  category_id: 4,
+  category_name: "Snack",
+  source: "image",
+  disclaimer: "Estimasi nutrisi dari AI berdasarkan analisis visual.",
+  items: [
+    {
+      food_name: "Sate kambing",
+      serving: 150,
+      suffix_serving: "gr",
+      calories: 350,
+      fat: 25,
+      protein: 30,
+    },
+    {
+      food_name: "Lontong",
+      serving: 200,
+      suffix_serving: "gr",
+      calories: 200,
+      fat: 0.5,
+      protein: 4,
+    },
+    {
+      food_name: "Soto kuning",
+      serving: 250,
+      suffix_serving: "ml",
+      calories: 150,
+      fat: 10,
+      protein: 5,
+    },
+  ],
+};
+
+describe("parseFoodAnalysisItems", () => {
+  it("parses valid API items and skips invalid entries", () => {
+    const items = parseFoodAnalysisItems([
+      {
+        food_name: "Sate kambing",
+        serving: 150,
+        suffix_serving: "gr",
+        calories: 350,
+        fat: 25,
+        protein: 30,
+        confidence: 0.9,
+      },
+      { food_name: "" },
+      null,
+    ]);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.food_name, "Sate kambing");
+    assert.equal(items[0]?.confidence, 0.9);
+  });
+});
+
+describe("foodDisplayNameFromItems", () => {
+  it("joins item names when items exist", () => {
+    assert.equal(
+      foodDisplayNameFromItems(baseDraft.items, "Sate kambing"),
+      "Sate kambing, Lontong, Soto kuning",
+    );
+  });
+
+  it("falls back when items empty", () => {
+    assert.equal(foodDisplayNameFromItems(undefined, "Nasi ayam"), "Nasi ayam");
+  });
+});
+
+describe("PHOTO_GUIDELINES", () => {
+  it("emphasizes top-down angle and full visibility", () => {
+    assert.match(PHOTO_GUIDELINES, /dari atas/i);
+    assert.match(PHOTO_GUIDELINES, /semua makanan terlihat/i);
+  });
+});
+
+describe("formatFoodSummary", () => {
+  it("includes CTA, labels, breakdown, and watermark", () => {
+    const text = formatFoodSummary(baseDraft);
+    assert.match(text, /\*BALAS YA UNTUK MENYIMPAN\*/);
+    assert.match(text, /Calorie: 700 kcal/);
+    assert.match(text, /Protein: 39g/);
+    assert.match(text, /Fat: 35\.5g/);
+    assert.match(text, /• Sate kambing — 150 gr · 350 kcal/);
+    assert.match(text, /• Soto kuning — 250 ml · 150 kcal/);
+    assert.match(text, /Total: 350 gr \(campuran gr\/ml\)/);
+    assert.match(text, /Powered by SOLIDPACE/);
+  });
+});
