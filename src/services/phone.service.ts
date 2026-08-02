@@ -1,21 +1,5 @@
 import type { Client } from 'whatsapp-web.js'
-
-function widToSerialized(wid: unknown): string | null {
-	if (!wid) return null
-	if (typeof wid === 'string') return wid
-	if (typeof wid === 'object') {
-		const w = wid as {
-			_serialized?: string
-			$1?: string
-			user?: string
-			server?: string
-		}
-		if (w._serialized) return w._serialized
-		if (w.$1) return w.$1
-		if (w.user && w.server) return `${w.user}@${w.server}`
-	}
-	return null
-}
+import { resolveNumberOnPage } from '@/bot/waStore.js'
 
 export function formatPhoneNumber(phoneNumber: string): string {
 	let formatted = phoneNumber.trim().replaceAll(/\D/g, '')
@@ -67,30 +51,28 @@ export async function resolveWhatsAppContactId(
 	client: Client,
 	formattedPhone: string,
 ): Promise<{ contactId: string; lookupIds: string[] } | { error: string }> {
-	const numberId = await client.getNumberId(formattedPhone)
-	const primaryId = widToSerialized(numberId)
-	if (!primaryId) {
-		return { error: `Nomor ${formattedPhone} tidak terdaftar di WhatsApp` }
-	}
-
-	let lookupIds = buildPhoneLookupIds(formattedPhone, primaryId)
-
-	try {
-		const [lidPn] = await client.getContactLidAndPhone([primaryId])
-		const lid =
-			widToSerialized(lidPn?.lid) ||
-			(typeof lidPn?.lid === 'string' ? lidPn.lid : null)
-		const pn =
-			widToSerialized(lidPn?.pn) ||
-			(typeof lidPn?.pn === 'string' ? lidPn.pn : null)
-		if (lid || pn) {
-			lookupIds = buildPhoneLookupIds(formattedPhone, primaryId, lid, pn)
+	// Avoid Client.getNumberId — it crashes when Store.WidFactory is temporarily undefined.
+	const resolved = await resolveNumberOnPage(client, formattedPhone)
+	if (!resolved.ok) {
+		if (resolved.error === 'not_registered') {
+			return { error: `Nomor ${formattedPhone} tidak terdaftar di WhatsApp` }
 		}
-	} catch {
-		// LID lookup is best-effort; phone id still works for most accounts.
+		if (resolved.error === 'store_not_ready') {
+			return {
+				error:
+					'WhatsApp Store belum siap. Tunggu status ready (compat=on) atau POST /whatsapp/reconnect.',
+			}
+		}
+		return { error: resolved.error || `Gagal resolve nomor ${formattedPhone}` }
 	}
 
-	return { contactId: primaryId, lookupIds }
+	const lookupIds = buildPhoneLookupIds(
+		formattedPhone,
+		resolved.contactId,
+		...resolved.lookupIds,
+	)
+
+	return { contactId: resolved.contactId, lookupIds }
 }
 
 /** Used by personal message routes — throws on invalid contact. */
@@ -102,8 +84,6 @@ export async function getValidatedContact(client: Client, formattedPhone: string
 	return {
 		contactId: result.contactId,
 		lookupIds: result.lookupIds,
-		contact: await client
-			.getContactById(pickParticipantApiId(result.contactId, result.lookupIds))
-			.catch(() => null),
+		contact: null as unknown,
 	}
 }

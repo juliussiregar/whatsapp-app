@@ -15,6 +15,7 @@ import {
   sendCandidateIds,
 } from '@/services/phone.service.js'
 import sendMessageInBrowser from '../injected/send-message.browser.js'
+import { ensureWhatsAppStore } from '@/bot/waStore.js'
 import {
   ErrorSchema,
   StatusSchema,
@@ -56,6 +57,13 @@ async function sendMessageSafely(
 ) {
   if (!isReady()) {
     throw new Error('WhatsApp client belum ready. Tunggu status ready, lalu coba lagi.')
+  }
+
+  const store = await ensureWhatsAppStore(whatsAppClient, { retries: 8, delayMs: 750 })
+  if (!store.ok) {
+    throw new Error(
+      'WhatsApp Store belum siap (WidFactory missing). Tunggu sebentar atau POST /whatsapp/reconnect.',
+    )
   }
 
   const candidates = sendCandidateIds(contactId, lookupIds)

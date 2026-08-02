@@ -3,6 +3,7 @@ import { Client } from "whatsapp-web.js";
 import qrCode from "qrcode-terminal";
 import QRCode from "qrcode";
 import { applySerializedIdCompat } from "@/bot/waSerializedCompat.js";
+import { ensureWhatsAppStore } from "@/bot/waStore.js";
 
 const AUTH_DIR = "./.wwebjs_auth";
 
@@ -134,9 +135,18 @@ function attachListeners(client: Client) {
   client.once("ready", () => {
     clearAutoReconnectTimer();
     clearQr();
-    // Must finish compat patch BEFORE advertising ready — UI fetches chats immediately.
+    // Must finish store heal + compat patch BEFORE advertising ready.
     void (async () => {
       try {
+        const health = await ensureWhatsAppStore(client, { retries: 20, delayMs: 1000 });
+        if (!health.ok) {
+          console.warn("[WA Store] Ready event but WidFactory missing — marking error");
+          setState(
+            "error",
+            "WhatsApp Store.WidFactory unavailable. Coba POST /whatsapp/reconnect.",
+          );
+          return;
+        }
         await applySerializedIdCompat(client);
       } catch (err) {
         console.warn("[WA Compat] patch on ready failed:", err);

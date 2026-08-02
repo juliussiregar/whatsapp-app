@@ -1,5 +1,6 @@
 import { whatsAppClient } from "@/clients/whatsapp.js";
 import { applySerializedIdCompat } from "@/bot/waSerializedCompat.js";
+import { ensureWhatsAppStore } from "@/bot/waStore.js";
 // Plain JS — avoids tsx/esbuild __name helper breaking Puppeteer evaluate
 import fetchMessagesInBrowser from "../injected/fetch-messages.browser.js";
 import fetchGroupsInBrowser from "../injected/fetch-groups.browser.js";
@@ -299,11 +300,11 @@ export async function fetchChatsFromStore(
   filter: ChatFilter,
 ): Promise<ChatListItem[]> {
   return withStoreLock(async () => {
-    // Ensure $1/_serialized compat is applied before any store reads.
     try {
+      await ensureWhatsAppStore(whatsAppClient, { retries: 8, delayMs: 750 });
       await applySerializedIdCompat(whatsAppClient);
     } catch (err) {
-      console.warn("[WA Store] compat patch failed:", err);
+      console.warn("[WA Store] ensure/compat failed:", err);
     }
 
     let fromClient: ChatListItem[] = [];
