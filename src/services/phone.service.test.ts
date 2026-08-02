@@ -22,15 +22,24 @@ describe("formatPhoneNumber", () => {
 });
 
 describe("sendCandidateIds", () => {
-  it("prefers @lid then contactId then @c.us", () => {
-    const ids = sendCandidateIds("62811@c.us", [
-      "62811@c.us",
+  it("prefers @c.us before @lid for delivery", () => {
+    const ids = sendCandidateIds("999@lid", [
       "999@lid",
+      "62811@c.us",
       "62811@s.whatsapp.net",
     ]);
-    assert.equal(ids[0], "999@lid");
-    assert.ok(ids.includes("62811@c.us"));
+    assert.equal(ids[0], "62811@c.us");
+    assert.ok(ids.includes("999@lid"));
+    assert.ok(ids.indexOf("62811@c.us") < ids.indexOf("999@lid"));
     assert.equal(new Set(ids).size, ids.length);
+  });
+});
+
+describe("looksLikeLidUser", () => {
+  it("flags long non-62 ids", async () => {
+    const { looksLikeLidUser } = await import("./phone.service.js");
+    assert.equal(looksLikeLidUser("274083405140014"), true);
+    assert.equal(looksLikeLidUser("628112152555"), false);
   });
 });
 

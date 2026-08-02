@@ -150,6 +150,34 @@ export default function fetchChatsInBrowser() {
         (chat.contact && (chat.contact.formattedName || chat.contact.pushname)) ||
         id;
 
+      var phoneNumber = null;
+      if (!isGroup) {
+        if (id.slice(-5) === "@c.us" || id.indexOf("@s.whatsapp.net") !== -1) {
+          phoneNumber = id.split("@")[0];
+        } else if (id.slice(-4) === "@lid") {
+          try {
+            if (store.LidUtils && typeof store.LidUtils.getPhoneNumber === "function") {
+              var pnWid = store.LidUtils.getPhoneNumber(chat.id);
+              var pnId = serializeChatId(pnWid);
+              if (pnId && pnId.indexOf("@") !== -1) phoneNumber = pnId.split("@")[0];
+            }
+          } catch (e) {}
+          if (!phoneNumber) {
+            try {
+              var contactPn =
+                chat.contact &&
+                (chat.contact.phoneNumber || chat.contact.userid || chat.contact.number);
+              var contactId = serializeChatId(contactPn);
+              if (contactId && contactId.indexOf("@") !== -1) {
+                phoneNumber = contactId.split("@")[0];
+              } else if (typeof contactPn === "string" && contactPn.indexOf("@") === -1) {
+                phoneNumber = String(contactPn).replace(/\D/g, "") || null;
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
       var participantsCount = 0;
       if (isGroup && chat.groupMetadata && chat.groupMetadata.participants) {
         var p = chat.groupMetadata.participants;
@@ -185,6 +213,7 @@ export default function fetchChatsInBrowser() {
         id: id,
         name: name,
         isGroup: isGroup,
+        phoneNumber: phoneNumber,
         participantsCount: participantsCount,
         unreadCount: chat.unreadCount || 0,
         timestamp: chat.t || chat.timestamp || (lastMessage && lastMessage.timestamp) || null,

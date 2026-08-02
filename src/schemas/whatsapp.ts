@@ -78,7 +78,8 @@ export const ReconnectResponseSchema = z
 export const SendMessageBodySchema = z.object({
   phoneNumber: z.string().openapi({
     example: '6281234567890',
-    description: 'Nomor telepon tujuan. Format: 08xx, 628xx, atau +628xx',
+    description:
+      'Nomor telepon tujuan (bukan chatId/LID). Format: 08xx, 628xx, atau +628xx. Contoh: 6281234567890',
   }),
   message: z.string().openapi({
     example: 'Halo! Ini pesan dari WhatsApp API 👋',
@@ -151,10 +152,18 @@ export const LastMessageSchema = z
   .openapi('LastMessage')
 
 export const ChatItemSchema = z.object({
-  id: z.string().openapi({ example: '120363012345678901@g.us' }),
-  name: z.string().openapi({ example: 'Tim Project Alpha' }),
-  isGroup: z.boolean().openapi({ example: true }),
-  participantsCount: z.number().openapi({ example: 15 }),
+  id: z.string().openapi({ example: '6281234567890@c.us' }),
+  name: z.string().openapi({ example: 'Budi' }),
+  isGroup: z.boolean().openapi({ example: false }),
+  phoneNumber: z
+    .string()
+    .nullable()
+    .optional()
+    .openapi({
+      example: '6281234567890',
+      description: 'Nomor HP jika berhasil di-resolve dari chat (null untuk @lid yang belum ter-map)',
+    }),
+  participantsCount: z.number().openapi({ example: 0 }),
   unreadCount: z.number().openapi({ example: 2 }),
   timestamp: z.number().nullable().openapi({ example: 1718445600 }),
   lastMessage: LastMessageSchema.nullable(),

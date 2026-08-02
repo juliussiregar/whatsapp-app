@@ -212,10 +212,22 @@ export function formatMsgTime(ts) {
 }
 
 export function chatIdToPhone(chatId) {
-  return String(chatId || "")
+  const id = String(chatId || "");
+  if (!id) return "";
+  // Never treat LID user ids as phone numbers — they are internal WhatsApp IDs.
+  if (/@lid$/i.test(id)) return "";
+  return id
     .replace(/@c\.us$/i, "")
-    .replace(/@s\.whatsapp\.net$/i, "")
-    .replace(/@lid$/i, "");
+    .replace(/@s\.whatsapp\.net$/i, "");
+}
+
+/** Prefer resolved phoneNumber from chat list; never invent a phone from @lid. */
+export function chatToPhoneNumber(chat) {
+  if (!chat) return "";
+  if (chat.phoneNumber && String(chat.phoneNumber).replace(/\D/g, "").length >= 8) {
+    return String(chat.phoneNumber).replace(/\D/g, "");
+  }
+  return chatIdToPhone(chat.id);
 }
 
 export function showFeedback(el, text, ok, toastAlso = false) {

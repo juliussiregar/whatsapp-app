@@ -13,6 +13,7 @@ export interface ChatListItem {
   id: string;
   name: string;
   isGroup: boolean;
+  phoneNumber?: string | null;
   participantsCount: number;
   botIsMember?: boolean;
   unreadCount: number;
@@ -284,6 +285,7 @@ function mergeChats(primary: ChatListItem[], secondary: ChatListItem[]): ChatLis
       ...existing,
       name: existing.name !== existing.id ? existing.name : c.name,
       isGroup: existing.isGroup || c.isGroup,
+      phoneNumber: existing.phoneNumber || c.phoneNumber || null,
       participantsCount: Math.max(
         existing.participantsCount,
         c.participantsCount,

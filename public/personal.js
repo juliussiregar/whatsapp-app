@@ -10,6 +10,7 @@ import {
   loadMessages,
   setAvatar,
   chatIdToPhone,
+  chatToPhoneNumber,
   showFeedback,
   hideFeedback,
   bindTopbarActions,
@@ -120,7 +121,8 @@ async function selectPersonal(item) {
   renderPersonalList();
   $("personal-chat-title").textContent = item.name;
   const meta = $("personal-chat-meta");
-  if (meta) meta.textContent = chatIdToPhone(item.id);
+  const phone = chatToPhoneNumber(item);
+  if (meta) meta.textContent = phone || chatIdToPhone(item.id) || item.id;
   setAvatar($("personal-avatar"), item.name, false);
   hideFeedback($("personal-feedback"));
   setComposerEnabled(true);
@@ -169,11 +171,17 @@ $("form-personal-send")?.addEventListener("submit", async (e) => {
   setComposerEnabled(true);
   hideFeedback($("personal-feedback"));
   try {
+    const phoneNumber = chatToPhoneNumber(selectedPersonal);
+    if (!phoneNumber) {
+      throw new Error(
+        "Nomor HP tidak tersedia untuk chat ini (hanya ID internal @lid). Buka chat di WhatsApp HP sekali, refresh daftar, atau kirim lewat halaman Kirim Cepat dengan nomor 62…",
+      );
+    }
     await fetchJson(API.sendMessage, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        phoneNumber: chatIdToPhone(selectedPersonal.id),
+        phoneNumber,
         message,
       }),
     });

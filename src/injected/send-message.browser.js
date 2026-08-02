@@ -46,11 +46,20 @@ export default async function sendMessageInBrowser(candidateIds, message) {
 
       if (msg) {
         var msgId = ser(msg.id) || ser(msg) || "sent";
-        return { ok: true, via: chatId, msgId: String(msgId) };
+        // Prefer confirming delivery path used a phone JID when possible.
+        return {
+          ok: true,
+          via: chatId,
+          msgId: String(msgId),
+          viaLid: String(chatId).indexOf("@lid") !== -1,
+        };
       }
 
-      // Msg.get may fail after $1 rename even when addAndSendMsgToChat succeeded.
-      // If we got here without throw and waitUntilMsgSent finished, treat as sent.
+      // Only soft-accept when waiting finished and we used a phone JID.
+      if (String(chatId).indexOf("@lid") !== -1) {
+        errors.push(chatId + ": empty_result_on_lid");
+        continue;
+      }
       return { ok: true, via: chatId, msgId: "sent-no-id", soft: true };
     } catch (e) {
       errors.push(chatId + ": " + (e && e.message ? e.message : String(e)));

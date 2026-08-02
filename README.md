@@ -118,8 +118,22 @@ Content-Type: application/json
 ```
 
 **Notes:**
-- Phone numbers starting with `0` are automatically converted to `62` (Indonesian country code)
-- You can send to international numbers by using the full country code (e.g., `6281234567890`)
+- Body API hanya butuh **nomor HP** + **pesan** (bukan chatId / LID)
+- Format nomor: `08xx…`, `628xx…`, atau `+628xx…` (otomatis dinormalisasi ke `62…`)
+- Jangan kirim angka ID internal WhatsApp (LID), contoh `274083405140014` — itu bukan nomor HP
+- Contoh benar: `{ "phoneNumber": "6281234567890", "message": "Halo" }`
+
+### Status WhatsApp
+```http
+GET /whatsapp/status
+```
+Tunggu `ready: true` (dan log `compat=on`) sebelum mengirim.
+
+### Daftar chat
+```http
+GET /whatsapp/chats?type=personal
+```
+Setiap chat pribadi sebaiknya punya `phoneNumber` (di-resolve dari `@lid` bila perlu). UI memakai field ini untuk kirim.
 
 ## Usage Examples
 
