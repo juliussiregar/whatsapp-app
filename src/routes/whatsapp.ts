@@ -44,21 +44,10 @@ const whatsapp = new OpenAPIHono()
 // ── Helper functions ────────────────────────────────────────────────
 
 async function sendMessageSafely(contactId: string, content: any, options: any = {}) {
-  const contact = await whatsAppClient.getContactById(contactId)
-  if (!contact) {
-    throw new Error('Contact not found')
-  }
-  let chat = await contact.getChat()
-  if (chat) {
-    const verifiedChat = await whatsAppClient.getChatById(chat.id._serialized)
-    if (verifiedChat) {
-      await verifiedChat.sendMessage(content, { ...options, sendSeen: false })
-    } else {
-      await whatsAppClient.sendMessage(contactId, content, { ...options, sendSeen: false })
-    }
-  } else {
-    await whatsAppClient.sendMessage(contactId, content, { ...options, sendSeen: false })
-  }
+  // Avoid contact.getChat() / getChatById(): WhatsApp Web renamed id._serialized → id.$1,
+  // which makes those paths throw the opaque puppeteer error "r". client.sendMessage()
+  // takes the validated chat id string and uses WWebJS.getChat(chatId) directly (same as groups).
+  await whatsAppClient.sendMessage(contactId, content, { ...options, sendSeen: false })
 }
 
 async function getGroupChat(groupId?: string, groupName?: string) {
