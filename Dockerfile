@@ -5,12 +5,16 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY scripts ./scripts
 
 # Install dependencies (including dev dependencies for build)
 RUN npm install
 
 # Copy source code
 COPY . .
+
+# Ensure wwebjs patch is applied (postinstall may have run before scripts were present on rebuild caches)
+RUN node scripts/patch-wwebjs.mjs
 
 # Build TypeScript
 RUN npm run build
@@ -49,6 +53,7 @@ WORKDIR /app
 # Copy package files and lockfile from builder
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/package-lock.json ./package-lock.json
+COPY --from=builder /app/scripts ./scripts
 
 # Install only production dependencies
 RUN npm ci --omit=dev

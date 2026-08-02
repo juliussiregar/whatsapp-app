@@ -212,7 +212,10 @@ export function formatMsgTime(ts) {
 }
 
 export function chatIdToPhone(chatId) {
-  return chatId.replace(/@c\.us$/, "").replace(/@s\.whatsapp\.net$/, "");
+  return String(chatId || "")
+    .replace(/@c\.us$/i, "")
+    .replace(/@s\.whatsapp\.net$/i, "")
+    .replace(/@lid$/i, "");
 }
 
 export function showFeedback(el, text, ok, toastAlso = false) {

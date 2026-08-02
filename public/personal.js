@@ -173,6 +173,7 @@ $("form-personal-send")?.addEventListener("submit", async (e) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        chatId: selectedPersonal.id,
         phoneNumber: chatIdToPhone(selectedPersonal.id),
         message,
       }),

@@ -42,6 +42,7 @@ export default async function fetchMessagesInBrowser(chatId, targetLimit) {
     if (!author) return null;
     if (typeof author === "string") return author;
     if (author._serialized) return author._serialized;
+    if (author.$1) return author.$1;
     if (author.user && author.server) return author.user + "@" + author.server;
     if (author.id) return serializeAuthor(author.id);
     try {
@@ -334,7 +335,7 @@ export default async function fetchMessagesInBrowser(chatId, targetLimit) {
     }
 
     messages.push({
-      id: (m.id && m.id._serialized) || String(m.id),
+      id: (m.id && (m.id._serialized || m.id.$1)) || String(m.id),
       body: body,
       fromMe: fromMe,
       author: authorDisplay,

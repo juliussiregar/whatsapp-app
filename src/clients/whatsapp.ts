@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import { Client } from "whatsapp-web.js";
 import qrCode from "qrcode-terminal";
 import QRCode from "qrcode";
+import { applySerializedIdCompat } from "@/bot/waSerializedCompat.js";
 
 const AUTH_DIR = "./.wwebjs_auth";
 
@@ -135,6 +136,9 @@ function attachListeners(client: Client) {
     clearQr();
     setState("ready");
     console.info("WhatsApp Client is ready!");
+    void applySerializedIdCompat(client).catch((err) =>
+      console.warn("[WA Compat] patch on ready failed:", err),
+    );
   });
 
   client.on("disconnected", (reason) => {

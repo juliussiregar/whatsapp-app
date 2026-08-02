@@ -8,6 +8,7 @@ export default function fetchGroupsInBrowser() {
     if (!id) return null;
     if (typeof id === "string") return id;
     if (id._serialized) return id._serialized;
+    if (id.$1) return id.$1;
     if (id.user && id.server) return id.user + "@" + id.server;
     return null;
   }

@@ -2,6 +2,7 @@ import { whatsAppClient } from "@/clients/whatsapp.js";
 // Plain JS — avoids tsx/esbuild __name helper breaking Puppeteer evaluate
 import fetchMessagesInBrowser from "../injected/fetch-messages.browser.js";
 import fetchGroupsInBrowser from "../injected/fetch-groups.browser.js";
+import fetchChatsInBrowser from "../injected/fetch-chats.browser.js";
 import downloadMessageMediaInBrowser from "../injected/download-message-media.browser.js";
 
 export type ChatFilter = "all" | "personal" | "group";
@@ -73,10 +74,12 @@ function normalizeAuthor(author: unknown): string | null {
   if (typeof author === "object") {
     const a = author as {
       _serialized?: string;
+      $1?: string;
       user?: string;
       server?: string;
     };
     if (a._serialized) return a._serialized;
+    if (a.$1) return a.$1;
     if (a.user && a.server) return `${a.user}@${a.server}`;
   }
   const s = String(author);
@@ -160,7 +163,7 @@ function withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 function mapChatModel(chat: {
-  id?: { _serialized?: string };
+  id?: { _serialized?: string; $1?: string };
   name?: string;
   isGroup?: boolean;
   participants?: unknown[];
@@ -175,10 +178,11 @@ function mapChatModel(chat: {
 }): ChatListItem | null {
   try {
     const rawId = chat.id as
-      | { _serialized?: string; user?: string; server?: string }
+      | { _serialized?: string; $1?: string; user?: string; server?: string }
       | undefined;
     const id =
       rawId?._serialized ||
+      rawId?.$1 ||
       (rawId?.user && rawId?.server ? `${rawId.user}@${rawId.server}` : undefined);
     if (!id) return null;
 
@@ -221,91 +225,9 @@ async function fetchChatsViaClient(): Promise<ChatListItem[]> {
 
 async function fetchChatsViaStoreEvaluate(): Promise<ChatListItem[]> {
   const pupPage = getPupPage();
-  const raw = await pupPage.evaluate(() => {
-    // @ts-ignore — runs in browser
-    const store = window.Store;
-    if (!store?.Chat?.getModelsArray) return [];
-    const chats = store.Chat.getModelsArray();
-    const items: {
-      id: string;
-      name: string;
-      isGroup: boolean;
-      participantsCount: number;
-      unreadCount: number;
-      timestamp: number | null;
-      lastMessage: { body: string; fromMe: boolean; timestamp: number } | null;
-    }[] = [];
-
-    for (const chat of chats) {
-      try {
-        let id = chat.id?._serialized;
-        if (!id && chat.id?.user && chat.id?.server) {
-          id = `${chat.id.user}@${chat.id.server}`;
-        }
-        if (!id || typeof id !== "string") continue;
-        if (id.includes("@broadcast")) continue;
-
-        // @ts-ignore
-        const store = window.Store;
-        const isNewsletter =
-          store.ChatGetters?.getIsNewsletter?.(chat) || id.includes("@newsletter");
-        if (isNewsletter) continue;
-
-        const isGroup =
-          id.endsWith("@g.us") ||
-          Boolean(chat.groupMetadata) ||
-          (typeof chat.id?.isGroup === "function" && chat.id.isGroup());
-
-        const name =
-          chat.name ||
-          chat.formattedTitle ||
-          chat.contact?.formattedName ||
-          chat.contact?.pushname ||
-          id;
-
-        let participantsCount = 0;
-        if (isGroup && chat.groupMetadata?.participants) {
-          const p = chat.groupMetadata.participants;
-          participantsCount =
-            p._models?.length || (Array.isArray(p) ? p.length : 0);
-        }
-
-        const lm = chat.lastMessage || chat.msgs?.last?.();
-        let lastMessage = null;
-        if (lm) {
-          const type = lm.type || "chat";
-          const hasMedia =
-            Boolean(lm.directPath) ||
-            MEDIA_TYPES.has(type);
-          const body = formatMessageBody({
-            body: lm.body,
-            caption: lm.caption,
-            type,
-            hasMedia,
-          });
-          lastMessage = {
-            body,
-            fromMe: Boolean(lm.id?.fromMe ?? lm.fromMe),
-            timestamp: lm.t || lm.timestamp || 0,
-          };
-        }
-
-        items.push({
-          id,
-          name,
-          isGroup,
-          participantsCount,
-          unreadCount: chat.unreadCount || 0,
-          timestamp: chat.t || chat.timestamp || lastMessage?.timestamp || null,
-          lastMessage,
-        });
-      } catch {
-        continue;
-      }
-    }
-    return items;
-  });
-
+  const raw = await pupPage.evaluate(
+    fetchChatsInBrowser as (...args: unknown[]) => ChatListItem[],
+  );
   return Array.isArray(raw) ? raw : [];
 }
 
