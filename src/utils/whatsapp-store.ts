@@ -1,4 +1,5 @@
 import { whatsAppClient } from "@/clients/whatsapp.js";
+import { applySerializedIdCompat } from "@/bot/waSerializedCompat.js";
 // Plain JS — avoids tsx/esbuild __name helper breaking Puppeteer evaluate
 import fetchMessagesInBrowser from "../injected/fetch-messages.browser.js";
 import fetchGroupsInBrowser from "../injected/fetch-groups.browser.js";
@@ -225,10 +226,34 @@ async function fetchChatsViaClient(): Promise<ChatListItem[]> {
 
 async function fetchChatsViaStoreEvaluate(): Promise<ChatListItem[]> {
   const pupPage = getPupPage();
-  const raw = await pupPage.evaluate(
-    fetchChatsInBrowser as (...args: unknown[]) => ChatListItem[],
-  );
-  return Array.isArray(raw) ? raw : [];
+  const raw = (await pupPage.evaluate(
+    fetchChatsInBrowser as (...args: unknown[]) => unknown,
+  )) as
+    | ChatListItem[]
+    | {
+        items?: ChatListItem[];
+        debug?: {
+          rawCount?: number;
+          itemCount?: number;
+          skippedNoId?: number;
+          skippedNewsletter?: number;
+          skippedError?: number;
+          sampleIdKeys?: string[] | null;
+          compat?: boolean;
+        };
+      };
+
+  // Backward-compatible: older script returned a bare array.
+  if (Array.isArray(raw)) return raw;
+
+  const items = Array.isArray(raw?.items) ? raw.items : [];
+  const debug = raw?.debug;
+  if (debug) {
+    console.info(
+      `[WA Store] Store debug: raw=${debug.rawCount ?? "?"} ok=${debug.itemCount ?? items.length} noId=${debug.skippedNoId ?? 0} news=${debug.skippedNewsletter ?? 0} err=${debug.skippedError ?? 0} compat=${debug.compat ? "yes" : "no"} keys=${JSON.stringify(debug.sampleIdKeys || [])}`,
+    );
+  }
+  return items;
 }
 
 async function fetchGroupsViaStoreDedicated(): Promise<ChatListItem[]> {
@@ -274,16 +299,17 @@ export async function fetchChatsFromStore(
   filter: ChatFilter,
 ): Promise<ChatListItem[]> {
   return withStoreLock(async () => {
+    // Ensure $1/_serialized compat is applied before any store reads.
+    try {
+      await applySerializedIdCompat(whatsAppClient);
+    } catch (err) {
+      console.warn("[WA Store] compat patch failed:", err);
+    }
+
     let fromClient: ChatListItem[] = [];
     let fromStore: ChatListItem[] = [];
 
-    try {
-      fromClient = await fetchChatsViaClient();
-      console.info(`[WA Store] getChats(): ${fromClient.length} chats`);
-    } catch (err) {
-      console.warn("[WA Store] getChats() failed:", err);
-    }
-
+    // Prefer store evaluate — Client.getChats() is brittle after WA Web $1 rename.
     try {
       fromStore = await fetchChatsViaStoreEvaluate();
       console.info(`[WA Store] Store evaluate: ${fromStore.length} chats`);
@@ -291,9 +317,18 @@ export async function fetchChatsFromStore(
       console.warn("[WA Store] Store evaluate failed:", err);
     }
 
+    if (fromStore.length === 0) {
+      try {
+        fromClient = await fetchChatsViaClient();
+        console.info(`[WA Store] getChats(): ${fromClient.length} chats`);
+      } catch (err) {
+        console.warn("[WA Store] getChats() failed:", err);
+      }
+    }
+
     let chats = mergeChats(fromClient, fromStore);
 
-    if (filter === "group" || filter === "all") {
+    if (filter === "group" || filter === "all" || chats.length === 0) {
       const fromGroups = await fetchGroupsViaStoreDedicated();
       chats = mergeChats(chats, fromGroups);
     }
@@ -318,7 +353,7 @@ export async function fetchChatsFromStore(
         );
       }
       throw new Error(
-        "Tidak ada chat ditemukan. Pastikan WhatsApp sudah ready dan ada riwayat chat.",
+        "Tidak ada chat ditemukan. Pastikan WhatsApp sudah ready dan ada riwayat chat. Rebuild image dengan: docker compose up -d --build",
       );
     }
 

@@ -134,11 +134,16 @@ function attachListeners(client: Client) {
   client.once("ready", () => {
     clearAutoReconnectTimer();
     clearQr();
-    setState("ready");
-    console.info("WhatsApp Client is ready!");
-    void applySerializedIdCompat(client).catch((err) =>
-      console.warn("[WA Compat] patch on ready failed:", err),
-    );
+    // Must finish compat patch BEFORE advertising ready — UI fetches chats immediately.
+    void (async () => {
+      try {
+        await applySerializedIdCompat(client);
+      } catch (err) {
+        console.warn("[WA Compat] patch on ready failed:", err);
+      }
+      setState("ready");
+      console.info("WhatsApp Client is ready! (compat=on)");
+    })();
   });
 
   client.on("disconnected", (reason) => {

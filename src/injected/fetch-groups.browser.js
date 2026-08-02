@@ -7,9 +7,21 @@ export default function fetchGroupsInBrowser() {
   function serializeChatId(id) {
     if (!id) return null;
     if (typeof id === "string") return id;
-    if (id._serialized) return id._serialized;
-    if (id.$1) return id.$1;
-    if (id.user && id.server) return id.user + "@" + id.server;
+    try {
+      if (typeof id.toString === "function") {
+        var ts = id.toString();
+        if (ts && ts !== "[object Object]" && ts.indexOf("@") !== -1) return ts;
+      }
+    } catch (e) {}
+    try {
+      if (id.$1) return id.$1;
+    } catch (e) {}
+    try {
+      if (id._serialized) return id._serialized;
+    } catch (e) {}
+    try {
+      if (id.user && id.server) return id.user + "@" + id.server;
+    } catch (e) {}
     return null;
   }
 
