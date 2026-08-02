@@ -76,20 +76,14 @@ export const ReconnectResponseSchema = z
 // ── Send Message ────────────────────────────────────────────────────
 
 export const SendMessageBodySchema = z.object({
-  phoneNumber: z.string().optional().openapi({
+  phoneNumber: z.string().openapi({
     example: '6281234567890',
-    description: 'Nomor telepon tujuan. Format: 08xx, 628xx, atau +628xx. Wajib jika chatId tidak diisi.',
-  }),
-  chatId: z.string().optional().openapi({
-    example: '6281234567890@c.us',
-    description: 'ID chat WhatsApp (mis. 628xxx@c.us atau xxx@lid). Lebih andal dari nomor saat chat pakai LID.',
+    description: 'Nomor telepon tujuan. Format: 08xx, 628xx, atau +628xx',
   }),
   message: z.string().openapi({
     example: 'Halo! Ini pesan dari WhatsApp API 👋',
     description: 'Isi pesan yang akan dikirim',
   }),
-}).refine((b) => Boolean(b.chatId || b.phoneNumber), {
-  message: 'chatId atau phoneNumber wajib diisi',
 })
 
 export const SendMessageResponseSchema = z

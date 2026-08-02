@@ -235,28 +235,14 @@ const sendMessageRoute = createRoute({
 
 whatsapp.openapi(sendMessageRoute, async (c) => {
   try {
-    const { phoneNumber, chatId, message } = c.req.valid('json')
-    if (!message) {
-      return c.json({ success: false, error: 'Message is required' }, 400)
+    const { phoneNumber, message } = c.req.valid('json')
+    if (!phoneNumber || !message) {
+      return c.json({ success: false, error: 'Phone number and message are required' }, 400)
     }
-    if (!chatId && !phoneNumber) {
-      return c.json({ success: false, error: 'Phone number or chatId is required' }, 400)
-    }
-
-    let targetId: string
-    let toLabel: string
-    if (chatId && /@(c\.us|s\.whatsapp\.net|lid)$/i.test(chatId)) {
-      targetId = chatId
-      toLabel = chatId
-    } else {
-      const formattedPhone = formatPhoneNumber(phoneNumber || chatId || '')
-      const validated = await getValidatedContact(whatsAppClient, formattedPhone)
-      targetId = validated.contactId
-      toLabel = formattedPhone
-    }
-
-    await sendMessageSafely(targetId, message)
-    return c.json({ success: true, message: 'Message sent successfully', to: toLabel }, 200)
+    const formattedPhone = formatPhoneNumber(phoneNumber)
+    const { contactId } = await getValidatedContact(whatsAppClient, formattedPhone)
+    await sendMessageSafely(contactId, message)
+    return c.json({ success: true, message: 'Message sent successfully', to: formattedPhone }, 200)
   } catch (error) {
     console.error('Error sending WhatsApp message:', error)
     return c.json(
