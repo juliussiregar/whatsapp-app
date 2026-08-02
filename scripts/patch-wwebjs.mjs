@@ -16,19 +16,24 @@ const contactPath = join(
   root,
   "node_modules/whatsapp-web.js/src/structures/Contact.js",
 );
+const clientPath = join(
+  root,
+  "node_modules/whatsapp-web.js/src/Client.js",
+);
 
-function patchFile(path, replacements, label) {
+function patchFile(path, replacements, label, { force = false } = {}) {
   if (!existsSync(path)) {
     console.warn(`[patch-wwebjs] Skip ${label}: not found at ${path}`);
     return false;
   }
   let src = readFileSync(path, "utf8");
-  if (src.includes("__WWEBJS_SERIALIZED_COMPAT__")) {
-    console.info(`[patch-wwebjs] ${label} already patched`);
-    return false;
+  const already = src.includes("__WWEBJS_SERIALIZED_COMPAT__");
+  if (already && !force) {
+    // Still apply any missing replacements (for incremental patch updates).
   }
   let changed = 0;
   for (const [from, to] of replacements) {
+    if (src.includes(to) && !src.includes(from)) continue;
     if (!src.includes(from)) continue;
     const next = src.split(from).join(to);
     if (next !== src) {
@@ -37,10 +42,16 @@ function patchFile(path, replacements, label) {
     }
   }
   if (!changed) {
+    if (already) {
+      console.info(`[patch-wwebjs] ${label} already patched`);
+      return false;
+    }
     console.warn(`[patch-wwebjs] ${label}: no target strings found (library may have changed)`);
     return false;
   }
-  src = `/* __WWEBJS_SERIALIZED_COMPAT__ */\n` + src;
+  if (!src.includes("__WWEBJS_SERIALIZED_COMPAT__")) {
+    src = `/* __WWEBJS_SERIALIZED_COMPAT__ */\n` + src;
+  }
   writeFileSync(path, src);
   console.info(`[patch-wwebjs] Patched ${label} (${changed} replacement(s))`);
   return true;
@@ -84,9 +95,23 @@ const contactReplacements = [
   ],
 ];
 
+const clientReplacements = [
+  [
+    `return {
+                    lid: lid?._serialized,
+                    pn: phone?._serialized
+                };`,
+    `return {
+                    lid: lid?._serialized || lid?.$1,
+                    pn: phone?._serialized || phone?.$1
+                };`,
+  ],
+];
+
 let any = false;
 any = patchFile(utilsPath, utilsReplacements, "Injected/Utils.js") || any;
 any = patchFile(contactPath, contactReplacements, "Contact.js") || any;
+any = patchFile(clientPath, clientReplacements, "Client.js") || any;
 if (!any) {
   console.info("[patch-wwebjs] Nothing new to apply");
 }
