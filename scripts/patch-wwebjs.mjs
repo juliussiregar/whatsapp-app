@@ -86,6 +86,21 @@ const utilsReplacements = [
     "if (contact.id._serialized.endsWith('@lid')) {",
     "if ((contact.id._serialized || contact.id.$1 || '').endsWith('@lid')) {",
   ],
+  [
+    `const [msgPromise, sendMsgResultPromise] = window.Store.SendMessage.addAndSendMsgToChat(chat, message);
+        await msgPromise;
+
+        if (options.waitUntilMsgSent) await sendMsgResultPromise;
+
+        return window.Store.Msg.get(newMsgKey._serialized || newMsgKey.$1);`,
+    `const [msgPromise, sendMsgResultPromise] = window.Store.SendMessage.addAndSendMsgToChat(chat, message);
+        const sentMsg = await msgPromise;
+
+        if (options.waitUntilMsgSent) await sendMsgResultPromise;
+
+        const sentKey = newMsgKey._serialized || newMsgKey.$1;
+        return window.Store.Msg.get(sentKey) || (await window.Store.Msg.getMessagesById([sentKey]))?.messages?.[0] || sentMsg;`,
+  ],
 ];
 
 const contactReplacements = [

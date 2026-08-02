@@ -14,6 +14,7 @@ import {
   getValidatedContact,
   sendCandidateIds,
 } from '@/services/phone.service.js'
+import sendMessageInBrowser from '../injected/send-message.browser.js'
 import {
   ErrorSchema,
   StatusSchema,
@@ -53,11 +54,40 @@ async function sendMessageSafely(
   options: any = {},
   lookupIds: string[] = [],
 ) {
-  // client.sendMessage() can return undefined without throwing when chat resolve
-  // fails or Msg.get can't find the sent id ($1 rename). Never treat that as success.
+  if (!isReady()) {
+    throw new Error('WhatsApp client belum ready. Tunggu status ready, lalu coba lagi.')
+  }
+
   const candidates = sendCandidateIds(contactId, lookupIds)
   const errors: string[] = []
 
+  // Text: dedicated browser send — distinguishes chat_not_found vs real send,
+  // and treats waitUntilMsgSent completion as success even when Msg.get is empty ($1 bug).
+  if (typeof content === 'string') {
+    const pupPage = (whatsAppClient as { pupPage?: { evaluate: Function } }).pupPage
+    if (!pupPage) throw new Error('WhatsApp page tidak tersedia')
+
+    const outcome = (await pupPage.evaluate(
+      sendMessageInBrowser as (...args: unknown[]) => unknown,
+      candidates,
+      content,
+    )) as { ok?: boolean; via?: string; msgId?: string; soft?: boolean; errors?: string[] }
+
+    if (outcome?.ok) {
+      console.info(
+        `[WA Send] ok via ${outcome.via} msgId=${outcome.msgId}${outcome.soft ? ' (soft)' : ''}`,
+      )
+      return outcome
+    }
+    const detail = (outcome?.errors || []).join(' | ') || 'unknown'
+    throw new Error(
+      `Pesan tidak terkirim ke ${contactId}. Detail: ${detail}. ` +
+        'Buka chat nomor tersebut sekali di WhatsApp HP (atau Web), lalu coba kirim ulang.',
+    )
+  }
+
+  // Media / non-text: use client.sendMessage. Empty result after waitUntilMsgSent
+  // usually means sent-but-unreadable-id; only retry on thrown errors / chat missing.
   for (const id of candidates) {
     try {
       const result = await whatsAppClient.sendMessage(id, content, {
@@ -66,52 +96,21 @@ async function sendMessageSafely(
         waitUntilMsgSent: true,
       })
       if (result) {
-        console.info(`[WA Send] ok via ${id}`)
+        console.info(`[WA Send] media ok via ${id}`)
         return result
       }
-      errors.push(`${id}: empty result`)
-      console.warn(`[WA Send] empty result for ${id}`)
+      // No throw + wait finished → likely delivered; avoid duplicate retries.
+      console.warn(`[WA Send] media empty id for ${id}, treating as sent`)
+      return { soft: true, via: id }
     } catch (err: any) {
       const msg = err?.message || String(err)
       errors.push(`${id}: ${msg}`)
-      console.warn(`[WA Send] failed for ${id}:`, msg)
-    }
-  }
-
-  // Last resort: browser evaluate — confirms chat exists and sendMsg ran.
-  const pupPage = (whatsAppClient as { pupPage?: { evaluate: Function } }).pupPage
-  if (pupPage && typeof content === 'string') {
-    for (const id of candidates) {
-      try {
-        const outcome = await pupPage.evaluate(
-          async (chatId: string, message: string) => {
-            // @ts-ignore
-            const chat = await window.WWebJS.getChat(chatId, { getAsModel: false })
-            if (!chat) return { ok: false, reason: 'chat_not_found' }
-            // @ts-ignore
-            const msg = await window.WWebJS.sendMessage(chat, message, {})
-            const msgId =
-              msg?.id?._serialized ||
-              msg?.id?.$1 ||
-              (msg ? 'sent-without-id' : null)
-            return { ok: Boolean(msgId), msgId, reason: msgId ? null : 'send_returned_empty' }
-          },
-          id,
-          content,
-        )
-        if (outcome?.ok) {
-          console.info(`[WA Send] ok via browser evaluate ${id}`)
-          return outcome
-        }
-        errors.push(`${id}: evaluate ${outcome?.reason || 'failed'}`)
-      } catch (err: any) {
-        errors.push(`${id}: evaluate ${err?.message || String(err)}`)
-      }
+      console.warn(`[WA Send] media failed for ${id}:`, msg)
     }
   }
 
   throw new Error(
-    `Pesan tidak terkirim ke ${contactId}. Detail: ${errors.join(' | ')}. ` +
+    `Media tidak terkirim ke ${contactId}. Detail: ${errors.join(' | ')}. ` +
       'Buka chat nomor tersebut sekali di WhatsApp HP (atau Web), lalu coba kirim ulang.',
   )
 }

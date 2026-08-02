@@ -6,7 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc && tsc-alias && mkdir -p dist/injected && cp src/injected/*.js dist/injected/",
     "start": "node dist/index.js",
-    "postinstall": "node scripts/patch-wwebjs.mjs"
+    "postinstall": "node scripts/patch-wwebjs.mjs",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",

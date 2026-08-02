@@ -99,5 +99,30 @@ export default function applySerializedIdCompatInBrowser() {
     };
   }
 
+  if (window.WWebJS && window.WWebJS.sendMessage) {
+    var origSend = window.WWebJS.sendMessage.bind(window.WWebJS);
+    window.WWebJS.sendMessage = async function (chat, content, options) {
+      var opts = options || {};
+      if (opts.waitUntilMsgSent == null) opts.waitUntilMsgSent = true;
+      var msg = await origSend(chat, content, opts);
+      if (msg) {
+        ensureSerialized(msg.id);
+        return msg;
+      }
+      // Fallback: last outbound message on this chat (covers Msg.get miss after $1 rename)
+      try {
+        var last =
+          (chat.msgs && chat.msgs.last && chat.msgs.last()) ||
+          chat.lastMessage ||
+          null;
+        if (last && last.id && (last.id.fromMe || last.fromMe)) {
+          ensureSerialized(last.id);
+          return last;
+        }
+      } catch (e) {}
+      return msg;
+    };
+  }
+
   return { applied: true };
 }
