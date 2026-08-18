@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { formatFoodSummary, foodDisplayNameFromItems, PHOTO_GUIDELINES } from "./formatFood.js";
+import { formatFoodSummary, formatPendingFoodAsk, formatSaved, foodDisplayNameFromItems, PHOTO_GUIDELINES } from "./formatFood.js";
 import { parseFoodAnalysisItems } from "@/clients/solidpace.js";
 import type { FoodDraft } from "./session.js";
 
@@ -95,5 +95,44 @@ describe("formatFoodSummary", () => {
     assert.match(text, /• Soto kuning — 250 ml · 150 kcal/);
     assert.match(text, /Total: 350 gr \(campuran gr\/ml\)/);
     assert.match(text, /Powered by SOLIDPACE/);
+  });
+});
+
+describe("formatPendingFoodAsk", () => {
+  it("asks to confirm, cancel, or send a short correction", () => {
+    const text = formatPendingFoodAsk(baseDraft);
+    assert.match(text, /belum disimpan/i);
+    assert.match(text, /Sate kambing/);
+    assert.match(text, /\*ya\*/);
+    assert.match(text, /\*batal\*/);
+    assert.match(text, /300 kcal/);
+    assert.match(text, /makanan baru/);
+  });
+});
+
+describe("formatSaved", () => {
+  it("shows daily totals from the API when present", () => {
+    const text = formatSaved(baseDraft, "Julius Siregar", {
+      user_id: 63,
+      actual_id: 89,
+      category_id: 4,
+      food_name: "Pisang",
+      serving: 105,
+      suffix_serving: "gr",
+      calories: 98,
+      fat: 0.3,
+      protein: 1.2,
+      total_actual_calories: 1847,
+      total_actual_fatgrams: 62.1,
+      total_actual_proteingrams: 88,
+      sub_actual_id: 1,
+      food_id: 10,
+      created_at: "2026-08-13T08:00:00",
+    });
+    assert.match(text, /Julius Siregar/);
+    assert.match(text, /Pisang · 105gr/);
+    assert.match(text, /Total hari ini: \*1847 kcal\*/);
+    assert.match(text, /P 88g/);
+    assert.match(text, /F 62\.1g/);
   });
 });

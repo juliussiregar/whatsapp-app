@@ -22,9 +22,32 @@ export type FoodDraft = {
   items?: FoodDraftItem[];
 };
 
+export type ActivityDraft = {
+  activity_type: string;
+  session_name: string;
+  session_date: string;
+  duration: number;
+  distance?: number;
+  elevation_gain?: number;
+  hr_avg?: number;
+  hr_max?: number;
+  cadence_avg?: number;
+  calories?: number;
+  notes?: string;
+  dateAmbiguous?: boolean;
+};
+
+export type ActivityClarifyNeed = "activity_type" | "duration" | "duration_unit";
+
+export type ActivityPartial = Partial<ActivityDraft> & {
+  unclearDurationNumber?: number;
+};
+
 export type SessionState =
   | { kind: "idle" }
-  | { kind: "pending_confirm"; draft: FoodDraft };
+  | { kind: "pending_confirm"; draft: FoodDraft }
+  | { kind: "pending_confirm_activity"; draft: ActivityDraft }
+  | { kind: "pending_activity_clarify"; partial: ActivityPartial; needs: ActivityClarifyNeed[] };
 
 export type Session = {
   state: SessionState;

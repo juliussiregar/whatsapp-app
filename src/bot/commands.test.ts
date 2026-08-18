@@ -27,8 +27,12 @@ describe("isConfirmYes", () => {
     assert.equal(isConfirmYes("catat makan siang"), false);
   });
 
-  it("allows prefix match only when enabled", () => {
-    assert.equal(isConfirmYes("simpan nasi ayam", { allowPrefix: true }), true);
+  it("allows prefix match only for short acknowledgements", () => {
+    assert.equal(isConfirmYes("iya dong", { allowPrefix: true }), true);
+    assert.equal(isConfirmYes("simpan nasi ayam", { allowPrefix: true }), false);
+    assert.equal(isConfirmYes("catat lari 40 menit", { allowPrefix: true }), false);
+    assert.equal(isConfirmYes("catat"), true);
+    assert.equal(isConfirmYes("simpan"), true);
   });
 });
 
@@ -48,5 +52,12 @@ describe("isMenuCommand", () => {
   it("accepts help aliases", () => {
     assert.equal(isMenuCommand("help"), true);
     assert.equal(isMenuCommand("Halo!"), true);
+    assert.equal(isMenuCommand("help dong"), true);
+  });
+
+  it("does not treat time-of-day activity logs as menu", () => {
+    assert.equal(isMenuCommand("malam tadi lari 40 menit"), false);
+    assert.equal(isMenuCommand("pagi tadi gowes 1 jam"), false);
+    assert.equal(isMenuCommand("pagi"), true);
   });
 });

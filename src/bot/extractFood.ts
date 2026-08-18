@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { getOpenAiApiKey, getOpenAiModel, getOpenAiTimeoutMs } from "@/config.js";
+import { hasStrongFoodSignal } from "@/bot/intent.js";
 import type { FoodDraft } from "@/bot/session.js";
 
 export type ExtractedFood = {
@@ -65,8 +66,9 @@ Balas HANYA JSON valid tanpa markdown, dengan skema:
 }
 
 Aturan:
-- is_correction=true jika pesan mengubah/mengoreksi draft (kalori, porsi, kategori, nama, protein, lemak).
-- Contoh koreksi: "300 kcal", "250gr", "tadi pagi", "sarapan", "protein 20", "buatnya bubur ayam".
+- is_correction=true HANYA jika pesan mengoreksi angka/porsi/kategori draft yang sama.
+- Contoh koreksi: "300 kcal", "250gr", "tadi pagi", "sarapan", "protein 20".
+- Jika user menyebut MAKANAN/MINUMAN LAIN (bukan draft yang sama) → is_correction=false. Itu laporan baru, bukan koreksi nama.
 - Field yang TIDAK disebut di pesan → null (jangan diisi ulang dari draft).
 - category_hint: "tadi pagi"/"sarapan" → breakfast; "siang" → lunch; "malam" → dinner; "cemilan" → snack.
 - Jika pesan sama sekali tidak relevan dengan koreksi makanan → is_correction=false.`;
@@ -195,6 +197,73 @@ export function parseQuickCorrection(text: string): FoodCorrection | null {
   }
 
   return touched ? patch : null;
+}
+
+const CORRECTION_FILLER = new Set([
+  "ya",
+  "iya",
+  "oke",
+  "ok",
+  "dong",
+  "kak",
+  "nya",
+  "jadi",
+  "buatnya",
+  "namanya",
+  "bukan",
+  "tapi",
+  "tolong",
+  "koreksi",
+  "ganti",
+  "ubah",
+  "kalo",
+  "kalau",
+]);
+
+/** Sisa teks setelah token koreksi (kcal/porsi/slot) dibuang. */
+export function leftoverAfterFoodCorrection(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\d+(?:[.,]\d+)?\s*(?:kkal|kcal|kalori|kal|gr|g|ml|porsi)\b/g, " ")
+    .replace(/(?:protein|prot|lemak|fat)\s*[:=]?\s*\d+(?:[.,]\d+)?/g, " ")
+    .replace(/(?:^|\s)(?:p|f)\s*[:=]\s*\d+(?:[.,]\d+)?/g, " ")
+    .replace(
+      /\b(sarapan|breakfast|pagi|siang|lunch|malam|dinner|supper|snack|cemilan|camilan|ngemil|tadi)\b/g,
+      " ",
+    )
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function meaningfulLeftover(text: string): string {
+  return leftoverAfterFoodCorrection(text)
+    .split(/\s+/)
+    .filter((w) => w && !CORRECTION_FILLER.has(w))
+    .join(" ");
+}
+
+/** Deskripsi makanan/minuman baru, bukan koreksi angka/porsi/kategori. */
+export function looksLikeNewFoodEntry(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const leftover = meaningfulLeftover(t);
+  if (!leftover) return false;
+
+  const quick = parseQuickCorrection(t);
+  if (quick && leftover.length < 8 && leftover.split(/\s+/).length < 2) {
+    return false;
+  }
+
+  if (hasStrongFoodSignal(t) || hasStrongFoodSignal(leftover)) return true;
+  return leftover.split(/\s+/).filter(Boolean).length >= 2 || leftover.length >= 10;
+}
+
+/** Koreksi singkat saat ringkasan masih pending. */
+export function isFoodCorrectionText(text: string): boolean {
+  const quick = parseQuickCorrection(text);
+  if (!quick) return false;
+  return !looksLikeNewFoodEntry(text);
 }
 
 export function mergeFoodCorrection(draft: FoodDraft, patch: FoodCorrection): FoodDraft {

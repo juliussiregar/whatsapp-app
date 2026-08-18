@@ -37,7 +37,9 @@ export type FoodLogResult = {
   calories: number;
   fat: number;
   protein: number;
-  total_actual_calories: number;
+  total_actual_calories?: number;
+  total_actual_fatgrams?: number;
+  total_actual_proteingrams?: number;
   sub_actual_id: number;
   food_id: number;
   created_at: string;
@@ -71,6 +73,52 @@ export type FoodAnalysisResult = {
     disclaimer?: string;
   };
   saved: FoodLogResult | null;
+};
+
+export type TrainingSessionPayload = {
+  phone: string;
+  activity_type: string;
+  session_date: string;
+  duration: number;
+  session_name?: string;
+  distance?: number;
+  elevation_gain?: number;
+  hr_avg?: number;
+  hr_max?: number;
+  cadence_avg?: number;
+  calories?: number;
+  notes?: string;
+};
+
+export type TrainingSessionOverlap = {
+  overlapping?: boolean;
+  has_overlap?: boolean;
+  message?: string;
+  sessions?: Array<{
+    id?: number;
+    activity_type?: string;
+    session_name?: string;
+    session_date?: string;
+    source?: string;
+    source_label?: string;
+  }>;
+};
+
+export type TrainingSessionResult = {
+  id: number;
+  activity_type: string;
+  session_name?: string | null;
+  session_date: string;
+  duration: number;
+  distance?: number | null;
+  tss?: number | null;
+  source?: string;
+  source_label?: string;
+  device_label?: string | null;
+  import_channel?: string;
+  excluded_from_load?: boolean;
+  created_at?: string;
+  load_overlap?: TrainingSessionOverlap | null;
 };
 
 export function parseFoodAnalysisItems(raw: unknown): FoodAnalysisItem[] {
@@ -127,13 +175,36 @@ async function parseJson(res: Response): Promise<unknown> {
   }
 }
 
+function extractPydanticDetail(detail: unknown): string | undefined {
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (!Array.isArray(detail)) return undefined;
+  const parts: string[] = [];
+  for (const entry of detail) {
+    if (!entry || typeof entry !== "object") continue;
+    const o = entry as Record<string, unknown>;
+    const loc = Array.isArray(o.loc)
+      ? o.loc.filter((x) => x !== "body" && x !== "query" && x !== "path").join(".")
+      : "";
+    const msg = typeof o.msg === "string" ? o.msg : "";
+    if (!msg) continue;
+    parts.push(loc ? `${loc}: ${msg}` : msg);
+  }
+  return parts.length ? parts.join("; ") : undefined;
+}
+
 function extractErrorMessage(body: unknown, fallback: string): string {
   if (!body || typeof body !== "object") return fallback;
   const obj = body as Record<string, unknown>;
   if (typeof obj.message === "string" && obj.message.trim()) return obj.message;
   if (typeof obj.error === "string" && obj.error.trim()) return obj.error;
-  if (typeof obj.detail === "string" && obj.detail.trim()) return obj.detail;
+  const fromDetail = extractPydanticDetail(obj.detail);
+  if (fromDetail) return fromDetail;
   return fallback;
+}
+
+export function parseSolidPaceErrorDetail(body: unknown): string | undefined {
+  const msg = extractErrorMessage(body, "");
+  return msg || undefined;
 }
 
 function extractErrorCode(body: unknown): string | undefined {
@@ -227,4 +298,71 @@ export async function analyzeFoodImage(params: {
     { method: "POST", body: form },
   );
   return body.data;
+}
+
+function omitUndefined<T extends Record<string, unknown>>(obj: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as T;
+}
+
+export function parseLoadOverlap(raw: unknown): TrainingSessionOverlap | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const sessions = Array.isArray(o.sessions)
+    ? o.sessions.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") return [];
+        const s = entry as Record<string, unknown>;
+        return [
+          {
+            id: typeof s.id === "number" ? s.id : undefined,
+            activity_type: typeof s.activity_type === "string" ? s.activity_type : undefined,
+            session_name: typeof s.session_name === "string" ? s.session_name : undefined,
+            session_date: typeof s.session_date === "string" ? s.session_date : undefined,
+            source: typeof s.source === "string" ? s.source : undefined,
+            source_label: typeof s.source_label === "string" ? s.source_label : undefined,
+          },
+        ];
+      })
+    : undefined;
+  return {
+    overlapping: typeof o.overlapping === "boolean" ? o.overlapping : undefined,
+    has_overlap: typeof o.has_overlap === "boolean" ? o.has_overlap : undefined,
+    message: typeof o.message === "string" ? o.message : undefined,
+    sessions,
+  };
+}
+
+export async function logTrainingSession(
+  payload: TrainingSessionPayload,
+): Promise<TrainingSessionResult> {
+  const body = await requestJson<{ data: TrainingSessionResult }>(
+    `/integrations/whatsapp/training-sessions`,
+    {
+      method: "POST",
+      body: JSON.stringify(
+        omitUndefined({
+          phone: payload.phone,
+          activity_type: payload.activity_type,
+          session_date: payload.session_date,
+          duration: payload.duration,
+          session_name: payload.session_name,
+          distance: payload.distance,
+          elevation_gain: payload.elevation_gain,
+          hr_avg: payload.hr_avg,
+          hr_max: payload.hr_max,
+          cadence_avg: payload.cadence_avg,
+          calories: payload.calories,
+          notes: payload.notes?.slice(0, 2000),
+        }),
+      ),
+    },
+  );
+  const data = body.data;
+  return {
+    ...data,
+    load_overlap: parseLoadOverlap(data?.load_overlap) ?? data?.load_overlap ?? null,
+  };
 }

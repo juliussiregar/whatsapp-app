@@ -1,5 +1,12 @@
 import { formatWibClock } from "@/bot/category.js";
 import type { FoodDraft, FoodDraftItem } from "@/bot/session.js";
+import type { FoodLogResult } from "@/clients/solidpace.js";
+
+export function formatQty(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  const rounded = Math.round(n * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
 
 export const POWERED_BY_SOLIDPACE = "Powered by SOLIDPACE";
 
@@ -19,13 +26,13 @@ function aiEstimateNote(draft: FoodDraft): string {
   if (draft.source === "image") {
     return [
       "ℹ️ Beberapa item mungkin tidak terdeteksi. Kalau kurang tepat, kirim koreksi singkat, contoh:",
-      "_300 kcal_ · _250gr_ · _tadi pagi_ · _bubur ayam 250gr 320 kcal_",
+      "_300 kcal_ · _250gr_ · _tadi pagi_",
     ].join("\n");
   }
   return [
     "ℹ️ *Catatan:* angka di atas adalah *perkiraan AI Bot SolidPace*, bukan data pasti dari database.",
     "Kalau salah, kirim koreksi singkat, contoh:",
-    "_300 kcal_ · _250gr_ · _tadi pagi_ · _bubur ayam 250gr 320 kcal_",
+    "_300 kcal_ · _250gr_ · _tadi pagi_",
   ].join("\n");
 }
 
@@ -66,9 +73,9 @@ export function formatFoodSummary(draft: FoodDraft): string {
 
   lines.push(
     formatTotalServing(draft),
-    `🔥 Calorie: ${draft.calories} kcal`,
-    `🥩 Protein: ${draft.protein}g`,
-    `🧈 Fat: ${draft.fat}g`,
+    `🔥 Calorie: ${formatQty(draft.calories)} kcal`,
+    `🥩 Protein: ${formatQty(draft.protein)}g`,
+    `🧈 Fat: ${formatQty(draft.fat)}g`,
     `🏷 Kategori: *${draft.category_name}* (jam WIB ${formatWibClock()})`,
   );
 
@@ -82,18 +89,57 @@ export function formatFoodSummary(draft: FoodDraft): string {
   return lines.join("\n");
 }
 
-export function formatSaved(draft: FoodDraft, fullName?: string): string {
-  const who = fullName ? `, ${fullName}` : "";
+export function formatPendingFoodAsk(draft: FoodDraft): string {
   return [
-    `✅ Tersimpan${who}!`,
-    `🍽 ${draft.food_name} · ${draft.serving}${draft.suffix_serving}`,
-    `🔥 Calorie: ${draft.calories} kcal · Protein: ${draft.protein}g · Fat: ${draft.fat}g`,
-    `🏷 *${draft.category_name}*`,
+    `Masih ada ringkasan yang belum disimpan: *${draft.food_name}* (${formatQty(draft.calories)} kcal).`,
     "",
-    "Kirim makanan/foto berikutnya, atau ketik *help*.",
+    "Balas *ya* untuk menyimpan, atau *batal* untuk buang.",
+    "",
+    "Kalau mau koreksi, kirim singkat: _300 kcal_ · _250gr_ · _tadi pagi_",
+    "Kalau ini makanan baru, ketik *batal* dulu lalu kirim lagi.",
     "",
     POWERED_BY_SOLIDPACE,
   ].join("\n");
+}
+
+export function formatSaved(
+  draft: FoodDraft,
+  fullName?: string,
+  result?: FoodLogResult | null,
+): string {
+  const who = fullName ? `, ${fullName}` : "";
+  const calories = result?.calories ?? draft.calories;
+  const protein = result?.protein ?? draft.protein;
+  const fat = result?.fat ?? draft.fat;
+  const serving = result?.serving ?? draft.serving;
+  const suffix = result?.suffix_serving ?? draft.suffix_serving;
+  const foodName = result?.food_name ?? draft.food_name;
+
+  const lines = [
+    `✅ Tersimpan${who}!`,
+    `🍽 ${foodName} · ${formatQty(serving)}${suffix}`,
+    `🔥 ${formatQty(calories)} kcal · Protein ${formatQty(protein)}g · Fat ${formatQty(fat)}g`,
+    `🏷 *${draft.category_name}*`,
+  ];
+
+  const dayCal = result?.total_actual_calories;
+  if (dayCal != null) {
+    const dayP = result?.total_actual_proteingrams;
+    const dayF = result?.total_actual_fatgrams;
+    const extras = [
+      dayP != null ? `P ${formatQty(dayP)}g` : null,
+      dayF != null ? `F ${formatQty(dayF)}g` : null,
+    ].filter(Boolean);
+    lines.push(
+      "",
+      extras.length
+        ? `📊 Total hari ini: *${formatQty(dayCal)} kcal* · ${extras.join(" · ")}`
+        : `📊 Total hari ini: *${formatQty(dayCal)} kcal*`,
+    );
+  }
+
+  lines.push("", "Kirim makanan, foto, atau aktivitas berikutnya, atau ketik *help*.", "", POWERED_BY_SOLIDPACE);
+  return lines.join("\n");
 }
 
 export function foodDisplayNameFromItems(

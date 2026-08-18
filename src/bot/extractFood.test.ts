@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  isFoodCorrectionText,
+  looksLikeNewFoodEntry,
+  leftoverAfterFoodCorrection,
   mergeFoodCorrection,
   parseQuickCorrection,
 } from "./extractFood.js";
@@ -39,6 +42,50 @@ describe("parseQuickCorrection", () => {
     const patch = parseQuickCorrection("250gr");
     assert.equal(patch?.serving, 250);
     assert.equal(patch?.suffix_serving, "gr");
+  });
+});
+
+describe("looksLikeNewFoodEntry", () => {
+  it("treats a different dish as a new log, not a name-only correction", () => {
+    assert.equal(looksLikeNewFoodEntry("Ayam goreng dan nasi dengan jukut goreng"), true);
+    assert.equal(looksLikeNewFoodEntry("Usus bakar"), true);
+    assert.equal(looksLikeNewFoodEntry("Kulit goreng chili oil"), true);
+    assert.equal(looksLikeNewFoodEntry("Bebek goreng bumbu hitam pakai nasi dan kol goreng"), true);
+    assert.equal(looksLikeNewFoodEntry("Milk tea zero sugar"), true);
+  });
+
+  it("keeps short numeric/slot replies as corrections", () => {
+    assert.equal(looksLikeNewFoodEntry("300 kcal"), false);
+    assert.equal(looksLikeNewFoodEntry("250gr"), false);
+    assert.equal(looksLikeNewFoodEntry("tadi pagi"), false);
+    assert.equal(looksLikeNewFoodEntry("300"), false);
+  });
+
+  it("treats food name plus macros as a new log", () => {
+    assert.equal(looksLikeNewFoodEntry("bubur ayam 250gr 320 kcal"), true);
+  });
+});
+
+describe("isFoodCorrectionText", () => {
+  it("accepts short numeric and slot corrections", () => {
+    assert.equal(isFoodCorrectionText("300 kcal"), true);
+    assert.equal(isFoodCorrectionText("250gr"), true);
+    assert.equal(isFoodCorrectionText("tadi pagi"), true);
+    assert.equal(isFoodCorrectionText("300"), true);
+  });
+
+  it("rejects a different dish so the bot can ask again", () => {
+    assert.equal(isFoodCorrectionText("Ayam goreng dan nasi"), false);
+    assert.equal(isFoodCorrectionText("Usus bakar"), false);
+    assert.equal(isFoodCorrectionText("Milk tea zero sugar"), false);
+    assert.equal(isFoodCorrectionText("Ini"), false);
+  });
+});
+
+describe("leftoverAfterFoodCorrection", () => {
+  it("strips kcal and serving tokens", () => {
+    assert.equal(leftoverAfterFoodCorrection("300 kcal"), "");
+    assert.match(leftoverAfterFoodCorrection("bubur ayam 250gr 320 kcal"), /bubur ayam/);
   });
 });
 
