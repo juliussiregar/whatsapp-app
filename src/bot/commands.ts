@@ -96,6 +96,11 @@ export function isConfirmYes(cmd: string, opts?: MatchWordOpts): boolean {
   return CONFIRM_YES_PREFIX.includes(firstToken(normalized));
 }
 
+export function isReplaceCommand(cmd: string): boolean {
+  const normalized = normalizeCmd(cmd);
+  return normalized === "ganti" || normalized === "replace" || normalized === "/ganti";
+}
+
 export function isConfirmNo(cmd: string, opts?: MatchWordOpts): boolean {
   return matchesWord(cmd, CONFIRM_NO_WORDS, opts);
 }

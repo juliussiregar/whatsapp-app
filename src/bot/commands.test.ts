@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isConfirmNo, isConfirmYes, isMenuCommand, normalizeCmd } from "./commands.js";
+import { isConfirmNo, isConfirmYes, isMenuCommand, isReplaceCommand, normalizeCmd } from "./commands.js";
 
 describe("normalizeCmd", () => {
   it("trims and lowercases", () => {
@@ -59,5 +59,13 @@ describe("isMenuCommand", () => {
     assert.equal(isMenuCommand("malam tadi lari 40 menit"), false);
     assert.equal(isMenuCommand("pagi tadi gowes 1 jam"), false);
     assert.equal(isMenuCommand("pagi"), true);
+  });
+});
+
+describe("isReplaceCommand", () => {
+  it("accepts ganti exact", () => {
+    assert.equal(isReplaceCommand("ganti"), true);
+    assert.equal(isReplaceCommand("Ganti."), true);
+    assert.equal(isReplaceCommand("ganti makanan"), false);
   });
 });

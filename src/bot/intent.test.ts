@@ -12,6 +12,8 @@ describe("classifyTextIntent", () => {
   it("detects food logs", () => {
     assert.equal(classifyTextIntent("nasi goreng 250gr siang"), "food");
     assert.equal(classifyTextIntent("saya habis makan ayam"), "food");
+    assert.equal(classifyTextIntent("pisang 1 buah"), "food");
+    assert.equal(classifyTextIntent("indomie rebus makan malam"), "food");
   });
 
   it("prefers food when both signals exist", () => {

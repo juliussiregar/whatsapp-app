@@ -1,4 +1,5 @@
 import { formatWibClock } from "@/bot/category.js";
+import { CALORIES_ADJUSTED_NOTE } from "@/bot/extractFood.js";
 import type { FoodDraft, FoodDraftItem } from "@/bot/session.js";
 import type { FoodLogResult } from "@/clients/solidpace.js";
 
@@ -26,13 +27,13 @@ function aiEstimateNote(draft: FoodDraft): string {
   if (draft.source === "image") {
     return [
       "ℹ️ Beberapa item mungkin tidak terdeteksi. Kalau kurang tepat, kirim koreksi singkat, contoh:",
-      "_300 kcal_ · _250gr_ · _tadi pagi_",
+      "_300 kcal_ · _250gr_ · _tadi pagi_ · _karbo 28_ · _protein 20_",
     ].join("\n");
   }
   return [
     "ℹ️ *Catatan:* angka di atas adalah *perkiraan AI Bot SolidPace*, bukan data pasti dari database.",
     "Kalau salah, kirim koreksi singkat, contoh:",
-    "_300 kcal_ · _250gr_ · _tadi pagi_",
+    "_300 kcal_ · _250gr_ · _tadi pagi_ · _karbo 28_ · _protein 20 lemak 8_",
   ].join("\n");
 }
 
@@ -52,7 +53,7 @@ function formatItemLine(item: FoodDraftItem): string {
     item.serving > 0
       ? `${item.serving} ${item.suffix_serving}`
       : "porsi tidak diketahui";
-  return `   • ${item.food_name} — ${portion} · ${item.calories} kcal`;
+  return `   • ${item.food_name} — ${portion} · ${formatQty(item.calories)} kcal · ${formatQty(item.protein)}P ${formatQty(item.fat)}L ${formatQty(item.carbo)}K`;
 }
 
 export function formatFoodSummary(draft: FoodDraft): string {
@@ -73,14 +74,18 @@ export function formatFoodSummary(draft: FoodDraft): string {
 
   lines.push(
     formatTotalServing(draft),
-    `🔥 Calorie: ${formatQty(draft.calories)} kcal`,
+    `🔥 Kalori: ${formatQty(draft.calories)} kcal`,
     `🥩 Protein: ${formatQty(draft.protein)}g`,
-    `🧈 Fat: ${formatQty(draft.fat)}g`,
+    `🧈 Lemak: ${formatQty(draft.fat)}g`,
+    `🍞 Karbo: ${formatQty(draft.carbo)}g`,
     `🏷 Kategori: *${draft.category_name}* (jam WIB ${formatWibClock()})`,
   );
 
   if (draft.disclaimer) {
     lines.push("", `💬 ${draft.disclaimer}`);
+  }
+  if (draft.caloriesAdjusted) {
+    lines.push("", `ℹ️ ${CALORIES_ADJUSTED_NOTE}`);
   }
 
   lines.push("", aiEstimateNote(draft));
@@ -91,12 +96,69 @@ export function formatFoodSummary(draft: FoodDraft): string {
 
 export function formatPendingFoodAsk(draft: FoodDraft): string {
   return [
-    `Masih ada ringkasan yang belum disimpan: *${draft.food_name}* (${formatQty(draft.calories)} kcal).`,
+    `Masih ada ringkasan yang belum disimpan: *${draft.food_name}* (${formatQty(draft.calories)} kcal · karbo ${formatQty(draft.carbo)}g).`,
     "",
-    "Balas *ya* untuk menyimpan, atau *batal* untuk buang.",
+    "*ya* — simpan · *ganti* — buang ini, pakai pesan baru · *batal* — buang",
     "",
-    "Kalau mau koreksi, kirim singkat: _300 kcal_ · _250gr_ · _tadi pagi_",
-    "Kalau ini makanan baru, ketik *batal* dulu lalu kirim lagi.",
+    "Koreksi singkat: _300 kcal_ · _250gr_ · _tadi pagi_ · _karbo 28_ · _protein 20 lemak 8_",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatPendingFoodReplace(draft: FoodDraft, incoming: string): string {
+  const preview = incoming.trim().slice(0, 80);
+  return [
+    `Masih ada *${draft.food_name}* yang belum disimpan.`,
+    "",
+    `Balas *ganti* untuk buang itu dan catat: _${preview}_`,
+    "Atau *ya* untuk simpan yang lama, *batal* untuk buang semua.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatFoodNeedMacros(foodName: string): string {
+  return [
+    `Kebaca *${foodName}*, tapi angka gizinya belum jelas.`,
+    "",
+    "Kirim perkiraan, contoh:",
+    "• _300 kcal karbo 40_",
+    "• _protein 20 lemak 8 karbo 50_",
+    "Atau kirim *foto* makanannya dari atas.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatHelp(): string {
+  return [
+    "*Bot SolidPace* 👋",
+    "",
+    "*Makanan:* tulis apa yang dimakan, atau kirim foto dari atas.",
+    "Contoh: _nasi ayam 300gr malam_ · _nasi putih 200gr karbo 45_",
+    "",
+    "*Latihan:* tulis jenis + durasi (file jam tidak lewat WA).",
+    "Contoh: _lari 5km 40 menit_ · _gowes 1 jam kemarin_",
+    "",
+    "*ya* simpan · *batal* buang · *ganti* pakai pesan baru",
+    "",
+    "Nomor WA harus sudah ada di profil SolidPace.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatFoodUnclear(): string {
+  return [
+    "Belum kebaca sebagai catatan makanan.",
+    "",
+    "Coba tulis seperti ini:",
+    "• _Nasi ayam 300gr makan malam_",
+    "• _Kopi susu 1 gelas, 150 kcal_",
+    "• _Nasi putih 200gr, protein 4 karbo 45_",
+    "",
+    "Atau kirim *foto* makanan dari atas. Ketik *help* untuk panduan.",
     "",
     POWERED_BY_SOLIDPACE,
   ].join("\n");
@@ -111,6 +173,7 @@ export function formatSaved(
   const calories = result?.calories ?? draft.calories;
   const protein = result?.protein ?? draft.protein;
   const fat = result?.fat ?? draft.fat;
+  const carbo = result?.carbo ?? draft.carbo;
   const serving = result?.serving ?? draft.serving;
   const suffix = result?.suffix_serving ?? draft.suffix_serving;
   const foodName = result?.food_name ?? draft.food_name;
@@ -118,7 +181,7 @@ export function formatSaved(
   const lines = [
     `✅ Tersimpan${who}!`,
     `🍽 ${foodName} · ${formatQty(serving)}${suffix}`,
-    `🔥 ${formatQty(calories)} kcal · Protein ${formatQty(protein)}g · Fat ${formatQty(fat)}g`,
+    `🔥 ${formatQty(calories)} kcal · Protein ${formatQty(protein)}g · Lemak ${formatQty(fat)}g · Karbo ${formatQty(carbo)}g`,
     `🏷 *${draft.category_name}*`,
   ];
 
@@ -126,9 +189,11 @@ export function formatSaved(
   if (dayCal != null) {
     const dayP = result?.total_actual_proteingrams;
     const dayF = result?.total_actual_fatgrams;
+    const dayC = result?.total_actual_carbograms;
     const extras = [
       dayP != null ? `P ${formatQty(dayP)}g` : null,
       dayF != null ? `F ${formatQty(dayF)}g` : null,
+      dayC != null ? `C ${formatQty(dayC)}g` : null,
     ].filter(Boolean);
     lines.push(
       "",
@@ -138,7 +203,7 @@ export function formatSaved(
     );
   }
 
-  lines.push("", "Kirim makanan, foto, atau aktivitas berikutnya, atau ketik *help*.", "", POWERED_BY_SOLIDPACE);
+  lines.push("", "Langsung kirim makanan, foto, atau aktivitas berikutnya.", "", POWERED_BY_SOLIDPACE);
   return lines.join("\n");
 }
 

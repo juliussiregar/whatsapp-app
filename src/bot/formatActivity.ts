@@ -50,14 +50,25 @@ export function formatActivitySummary(draft: ActivityDraft): string {
   return lines.join("\n");
 }
 
+export function formatPendingActivityReplace(draft: ActivityDraft, incoming: string): string {
+  const preview = incoming.trim().slice(0, 80);
+  return [
+    `Masih ada *${activityLabel(draft.activity_type)}* yang belum disimpan.`,
+    "",
+    `Balas *ganti* untuk buang itu dan catat: _${preview}_`,
+    "Atau *ya* untuk simpan yang lama, *batal* untuk buang semua.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
 export function formatPendingActivityAsk(draft: ActivityDraft): string {
   return [
     `Masih ada aktivitas yang belum disimpan: *${activityLabel(draft.activity_type)}* · ${formatDurationHuman(draft.duration)}.`,
     "",
-    "Balas *ya* untuk menyimpan, atau *batal* untuk buang.",
+    "*ya* — simpan · *ganti* — buang ini, pakai pesan baru · *batal* — buang",
     "",
     "Kalau mau koreksi, kirim singkat: _50 menit_ · _5 km_ · _kemarin_",
-    "Kalau ini makanan atau aktivitas baru, ketik *batal* dulu lalu kirim lagi.",
     "",
     POWERED_BY_SOLIDPACE,
   ].join("\n");
@@ -132,7 +143,7 @@ export function formatActivitySaved(
     lines.push("", overlap);
   }
 
-  lines.push("", "Kirim makanan, foto, atau aktivitas berikutnya, atau ketik *help*.", "", POWERED_BY_SOLIDPACE);
+  lines.push("", "Langsung kirim makanan, foto, atau aktivitas berikutnya.", "", POWERED_BY_SOLIDPACE);
   return lines.join("\n");
 }
 

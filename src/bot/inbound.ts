@@ -1,6 +1,6 @@
 import type { Message } from "whatsapp-web.js";
 import { pickCategory } from "@/bot/category.js";
-import { isCasualGreeting, isConfirmNo, isConfirmYes, isMenuCommand } from "@/bot/commands.js";
+import { isCasualGreeting, isConfirmNo, isConfirmYes, isMenuCommand, isReplaceCommand } from "@/bot/commands.js";
 import {
   activityDraftFromPartial,
   applyActivityClarifyText,
@@ -11,23 +11,40 @@ import {
   mergeActivityPartial,
   parseQuickActivityCorrection,
 } from "@/bot/extractActivity.js";
-import { extractFoodFromText, isFoodCorrectionText, mergeFoodCorrection, parseQuickCorrection } from "@/bot/extractFood.js";
+import {
+  extractFoodCorrection,
+  extractFoodFromText,
+  hasCorrectionPatch,
+  hasFoodMacros,
+  isFoodCorrectionText,
+  isSoftFoodCorrection,
+  looksLikeNewFoodEntry,
+  mergeFoodCorrection,
+  parseQuickCorrection,
+  resolveCarboGrams,
+  type FoodCorrection,
+} from "@/bot/extractFood.js";
 import {
   formatActivityClarify,
   formatActivitySaved,
   formatActivitySummary,
   formatPendingActivityAsk,
+  formatPendingActivityReplace,
 } from "@/bot/formatActivity.js";
 import {
+  formatFoodNeedMacros,
   formatFoodSummary,
+  formatFoodUnclear,
+  formatHelp,
   formatPendingFoodAsk,
+  formatPendingFoodReplace,
   formatSaved,
   foodDisplayNameFromItems,
   PHOTO_GUIDELINES,
   PHOTO_GUIDELINES_SHORT,
 } from "@/bot/formatFood.js";
 import { mapApiError } from "@/bot/apiError.js";
-import { classifyTextIntent, hasActivitySignal } from "@/bot/intent.js";
+import { classifyTextIntent, hasActivitySignal, shouldSwitchToFood } from "@/bot/intent.js";
 import {
   foodImageMimeErrorMessage,
   isAllowedFoodImageMime,
@@ -38,10 +55,13 @@ import {
   stableSessionKeyForMessage,
 } from "@/bot/messageContext.js";
 import { allowApiCall } from "@/bot/rateLimit.js";
+import { beginSave, endSave, isSaving } from "@/bot/saveLock.js";
 import {
   getSession,
+  queueIncomingText,
   resetSession,
   setSession,
+  takeQueuedText,
   type ActivityDraft,
   type ActivityPartial,
   type FoodDraft,
@@ -58,45 +78,6 @@ import {
 } from "@/clients/solidpace.js";
 import { isSolidPaceBotEnabled } from "@/config.js";
 import { isDirectUserChat } from "@/utils/phone.js";
-
-const WELCOME_TEXT = `*Halo! Selamat datang di Bot SolidPace* 👋
-
-Bot ini punya *3 fungsi utama*:
-
-*1. Melaporkan habis makan/minum apa*
-Anda bisa langsung kirim *teks* makanan atau minuman yang baru dikonsumsi, lalu bot akan bantu siapkan catatannya untuk disimpan ke SolidPace.
-
-Contoh:
-• _Saya habis makan nasi ayam 300gr untuk makan malam_
-• _Baru minum susu protein 1 botol_
-
-*2. Melaporkan makanan lewat foto*
-Kalau Anda belum tahu perkiraan kalori atau porsinya, cukup kirim *foto makanan*. Bot akan bantu analisis dulu, lalu tampilkan ringkasannya sebelum disimpan.
-
-${PHOTO_GUIDELINES}
-
-Contoh:
-• Kirim foto makanan
-• Tambahkan caption seperti _setengah piring_ atau _makan siang_ jika perlu
-
-*3. Mencatat aktivitas latihan (teks)*
-Setelah selesai latihan, tulis jenis, durasi, dan tanggalnya. Bot siapkan ringkasan dulu, baru disimpan setelah Anda balas *ya*.
-
-Contoh:
-• _Lari 5km, 40 menit, tanggal 17 Juli_
-• _Gowes 1 jam kemarin_
-• _Renang 45 menit tadi pagi_
-• _Yoga 30 menit_ / _Lari 8km 50 menit, elevasi 200m_
-
-📦 File jam (.fit / .tcx / .gpx) *tidak* bisa diunggah lewat WhatsApp — silakan lewat aplikasi SolidPace.
-
-*Perintah:*
-*menu* / *help* — tampilkan panduan ini
-*batal* — batalkan konfirmasi yang sedang aktif
-
-⏱ Kategori makanan seperti *sarapan / siang / snack / malam* bisa disebutkan di pesan, atau akan dipilih otomatis dari jam *WIB*.
-
-Jika nomor WhatsApp Anda belum terdaftar di SolidPace, silakan hubungi *admin* dan pastikan nomor WA sudah tersimpan di profil Anda.`;
 
 const ACTIVITY_EXT = /\.(fit|tcx|gpx)$/i;
 
@@ -176,6 +157,7 @@ function draftFromTotals(
     calories: number;
     fat: number;
     protein: number;
+    carbo?: number | null;
     suffix_serving?: string;
   },
   category: { category_id: number; name: string },
@@ -183,13 +165,17 @@ function draftFromTotals(
   disclaimer?: string,
   items?: FoodDraft["items"],
 ): FoodDraft {
+  const calories = totals.calories;
+  const fat = totals.fat;
+  const protein = totals.protein;
   return {
     food_name: foodDisplayNameFromItems(items, totals.food_name),
     serving: totals.serving,
     suffix_serving: totals.suffix_serving ?? "gr",
-    calories: totals.calories,
-    fat: totals.fat,
-    protein: totals.protein,
+    calories,
+    fat,
+    protein,
+    carbo: resolveCarboGrams(calories, protein, fat, totals.carbo),
     category_id: category.category_id,
     category_name: category.name,
     source,
@@ -222,7 +208,17 @@ async function handleConfirmYes(
     return;
   }
 
+  if (!beginSave(key)) {
+    await safeReply(
+      message,
+      "⏳ Sedang menyimpan catatan sebelumnya. Tunggu sebentar…",
+      "save_busy",
+    );
+    return;
+  }
+
   if (!allowApiCall(key)) {
+    endSave(key);
     await safeReply(
       message,
       "🚦 Terlalu banyak permintaan. Tunggu sebentar lalu balas *ya* lagi.",
@@ -257,11 +253,14 @@ async function handleConfirmYes(
     } catch (e) {
       waLogWarn("log_activity_fail", { from: message.from, err: errMsg(e) });
       await safeReply(message, mapApiError(e), "log_activity_fail");
+    } finally {
+      endSave(key);
     }
     return;
   }
 
   if (session.state.kind !== "pending_confirm") {
+    endSave(key);
     await safeReply(
       message,
       "Tidak ada ringkasan yang menunggu konfirmasi.\n\nKetik *help* untuk panduan.",
@@ -281,12 +280,15 @@ async function handleConfirmYes(
       calories: draft.calories,
       fat: draft.fat,
       protein: draft.protein,
+      carbo: draft.carbo,
     });
     resetSession(key);
     await safeReply(message, formatSaved(draft, session.fullName, saved), "saved");
   } catch (e) {
     waLogWarn("log_food_fail", { from: message.from, err: errMsg(e) });
     await safeReply(message, mapApiError(e), "log_food_fail");
+  } finally {
+    endSave(key);
   }
 }
 
@@ -307,7 +309,7 @@ async function settleActivityPartial(
 
   const draft = activityDraftFromPartial(partial);
   if (!draft) {
-    await safeReply(message, WELCOME_TEXT, "activity_incomplete");
+    await safeReply(message, formatHelp(), "activity_incomplete");
     return;
   }
 
@@ -395,6 +397,12 @@ async function handleActivityText(
       return;
     }
 
+    if (shouldSwitchToFood(text) || hasActivitySignal(text) || looksLikeNewFoodEntry(text)) {
+      queueIncomingText(key, text);
+      await safeReply(message, formatPendingActivityReplace(existingDraft, text), "activity_pending_replace");
+      return;
+    }
+
     await safeReply(message, formatPendingActivityAsk(existingDraft), "activity_pending_ask");
     return;
   }
@@ -439,7 +447,7 @@ async function handleActivityText(
       );
       return;
     }
-    await safeReply(message, WELCOME_TEXT, "not_activity");
+    await safeReply(message, formatHelp(), "not_activity");
     return;
   }
 
@@ -450,6 +458,31 @@ async function handleActivityText(
     extractedToPartial(extracted),
     "activity_confirm",
   );
+}
+
+async function applyFoodCorrection(
+  message: Message,
+  key: string,
+  session: Session,
+  user: SolidPaceUser,
+  existingDraft: FoodDraft,
+  correction: FoodCorrection,
+  ctx: string,
+): Promise<void> {
+  let draft = mergeFoodCorrection(existingDraft, correction);
+  if (correction.category_hint) {
+    const category = pickCategory(user.categories, correction.category_hint);
+    if (category) {
+      draft = {
+        ...draft,
+        category_id: category.category_id,
+        category_name: category.name,
+      };
+    }
+  }
+  session.state = { kind: "pending_confirm", draft };
+  setSession(key, session);
+  await safeReply(message, formatFoodSummary(draft), ctx);
 }
 
 async function handleFoodText(
@@ -464,22 +497,40 @@ async function handleFoodText(
     if (isFoodCorrectionText(text)) {
       const correction = parseQuickCorrection(text);
       if (correction) {
-        let draft = mergeFoodCorrection(existingDraft, correction);
-        if (correction.category_hint) {
-          const category = pickCategory(user.categories, correction.category_hint);
-          if (category) {
-            draft = {
-              ...draft,
-              category_id: category.category_id,
-              category_name: category.name,
-            };
-          }
-        }
-        session.state = { kind: "pending_confirm", draft };
-        setSession(key, session);
-        await safeReply(message, formatFoodSummary(draft), "confirm_corrected");
+        await applyFoodCorrection(message, key, session, user, existingDraft, correction, "confirm_corrected");
         return;
       }
+    }
+
+    if (isSoftFoodCorrection(text)) {
+      if (!allowApiCall(key)) {
+        await safeReply(message, formatPendingFoodAsk(existingDraft), "food_pending_ask");
+        return;
+      }
+      await safeReply(message, "⏳ Membaca koreksinya…", "correct_busy");
+      try {
+        const correction = await extractFoodCorrection(text, existingDraft);
+        if (hasCorrectionPatch(correction)) {
+          await applyFoodCorrection(
+            message,
+            key,
+            getSession(key),
+            user,
+            existingDraft,
+            correction,
+            "confirm_corrected_ai",
+          );
+          return;
+        }
+      } catch (e) {
+        waLogWarn("food_correct_fail", { from: message.from, err: errMsg(e) });
+      }
+    }
+
+    if (looksLikeNewFoodEntry(text) || hasActivitySignal(text)) {
+      queueIncomingText(key, text);
+      await safeReply(message, formatPendingFoodReplace(existingDraft, text), "food_pending_replace");
+      return;
     }
 
     await safeReply(message, formatPendingFoodAsk(existingDraft), "food_pending_ask");
@@ -495,7 +546,7 @@ async function handleFoodText(
     return;
   }
 
-  await safeReply(message, "⏳ Membaca makanan Anda…", "extract_busy");
+  await safeReply(message, "⏳ Membaca makanan dan menghitung gizinya…", "extract_busy");
 
   let extracted;
   try {
@@ -504,33 +555,23 @@ async function handleFoodText(
     waLogWarn("extract_fail", { from: message.from, err: errMsg(e) });
     await safeReply(
       message,
-      `⚠️ Gagal membaca pesan makanan: ${errMsg(e)}\n\nCoba tulis ulang, contoh: _nasi goreng 250gr siang_`,
+      `⚠️ Gagal membaca pesan makanan.\n\nCoba tulis ulang, contoh: _nasi goreng 250gr siang_ atau _nasi putih 200gr karbo 45_`,
       "extract_fail",
     );
     return;
   }
 
   if (!extracted.is_food_log || !extracted.food_name) {
-    if (existingDraft) {
-      await safeReply(
-        message,
-        [
-          "Belum mengerti koreksinya.",
-          "",
-          "Kirim singkat seperti: *300 kcal* / *tadi pagi* / *250gr*",
-          "Atau balas *ya* untuk menyimpan / *batal* untuk membatalkan.",
-          "",
-          formatFoodSummary(existingDraft),
-        ].join("\n"),
-        "correct_unclear",
-      );
-      return;
-    }
     if (hasActivitySignal(text)) {
       await handleActivityText(message, key, getSession(key), user, text);
       return;
     }
-    await safeReply(message, WELCOME_TEXT, "not_food");
+    await safeReply(message, formatFoodUnclear(), "not_food");
+    return;
+  }
+
+  if (!hasFoodMacros(extracted)) {
+    await safeReply(message, formatFoodNeedMacros(extracted.food_name), "food_need_macros");
     return;
   }
 
@@ -538,6 +579,7 @@ async function handleFoodText(
   const calories = Math.max(0, extracted.calories ?? 0);
   const fat = Math.max(0, extracted.fat ?? 0);
   const protein = Math.max(0, extracted.protein ?? 0);
+  const carbo = resolveCarboGrams(calories, protein, fat, extracted.carbo);
 
   const category = pickCategory(user.categories, extracted.category_hint, extracted.food_name);
   if (!category) {
@@ -557,6 +599,7 @@ async function handleFoodText(
       calories,
       fat,
       protein,
+      carbo,
     },
     category,
     "text",
@@ -648,14 +691,20 @@ async function handleFoodImage(
       return;
     }
 
-    const items = parseFoodAnalysisItems(result.analysis.items).map((item) => ({
-      food_name: item.food_name,
-      serving: item.serving > 0 ? item.serving : 0,
-      suffix_serving: item.suffix_serving ?? "gr",
-      calories: item.calories,
-      fat: item.fat,
-      protein: item.protein,
-    }));
+    const items = parseFoodAnalysisItems(result.analysis.items).map((item) => {
+      const calories = item.calories;
+      const fat = item.fat;
+      const protein = item.protein;
+      return {
+        food_name: item.food_name,
+        serving: item.serving > 0 ? item.serving : 0,
+        suffix_serving: item.suffix_serving ?? "gr",
+        calories,
+        fat,
+        protein,
+        carbo: resolveCarboGrams(calories, protein, fat, item.carbo),
+      };
+    });
 
     const displayName = foodDisplayNameFromItems(
       items.length ? items : undefined,
@@ -680,6 +729,7 @@ async function handleFoodImage(
         calories: Math.max(0, totals.calories ?? 0),
         fat: Math.max(0, totals.fat ?? 0),
         protein: Math.max(0, totals.protein ?? 0),
+        carbo: totals.carbo,
       },
       category,
       "image",
@@ -687,9 +737,13 @@ async function handleFoodImage(
       items.length ? items : undefined,
     );
 
+    const replacing = isPendingSession(getSession(key));
     session.state = { kind: "pending_confirm", draft };
     setSession(key, session);
-    await safeReply(message, formatFoodSummary(draft), "confirm_image");
+    const summary = replacing
+      ? `${formatFoodSummary(draft)}\n\nRingkasan sebelumnya diganti foto ini.`
+      : formatFoodSummary(draft);
+    await safeReply(message, summary, "confirm_image");
   } catch (e) {
     waLogWarn("analyze_fail", { from: message.from, err: errMsg(e) });
     await safeReply(message, mapApiError(e), "analyze_fail");
@@ -722,10 +776,19 @@ export async function handleInboundMessage(message: Message): Promise<void> {
     state: session.state.kind,
   });
 
+  if (isSaving(key)) {
+    await safeReply(
+      message,
+      "⏳ Sedang menyimpan catatan sebelumnya. Tunggu sebentar…",
+      "save_busy",
+    );
+    return;
+  }
+
   // Global commands & sapaan
   if (isMenuCommand(cmd)) {
     resetSession(key);
-    await safeReply(message, WELCOME_TEXT, "welcome");
+    await safeReply(message, formatHelp(), "welcome");
     return;
   }
 
@@ -734,7 +797,7 @@ export async function handleInboundMessage(message: Message): Promise<void> {
     !isPendingSession(session) &&
     isCasualGreeting(cmd)
   ) {
-    await safeReply(message, WELCOME_TEXT, "welcome");
+    await safeReply(message, formatHelp(), "welcome");
     return;
   }
 
@@ -761,6 +824,28 @@ export async function handleInboundMessage(message: Message): Promise<void> {
       `⚠️ ${errMsg(e)}\n\nHubungi *admin* jika masalah berlanjut.`,
       "phone_resolve_fail",
     );
+    return;
+  }
+
+  if (isTextOnly && isReplaceCommand(cmd) && isPendingSession(session)) {
+    const queued = takeQueuedText(key);
+    resetSession(key);
+    if (!queued) {
+      await safeReply(
+        message,
+        "Ringkasan lama dibuang. Kirim makanan, foto, atau aktivitas barunya.",
+        "replaced_idle",
+      );
+      return;
+    }
+    const user = await ensureUser(message, getSession(key), phone, key);
+    if (!user) return;
+    const intent = classifyTextIntent(queued);
+    if (intent === "activity") {
+      await handleActivityText(message, key, getSession(key), user, queued);
+    } else {
+      await handleFoodText(message, key, getSession(key), user, queued);
+    }
     return;
   }
 
@@ -813,7 +898,7 @@ export async function handleInboundMessage(message: Message): Promise<void> {
     }
     await safeReply(
       message,
-      "Tidak ada ringkasan yang menunggu konfirmasi.\n\n" + WELCOME_TEXT,
+      "Tidak ada ringkasan yang menunggu konfirmasi.\n\n" + formatHelp(),
       "confirm_idle",
     );
     return;
@@ -821,7 +906,7 @@ export async function handleInboundMessage(message: Message): Promise<void> {
 
   // Empty body (e.g. contact share)
   if (!cmd.trim()) {
-    await safeReply(message, WELCOME_TEXT, "empty");
+    await safeReply(message, formatHelp(), "empty");
     return;
   }
 

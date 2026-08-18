@@ -25,6 +25,7 @@ export type FoodLogPayload = {
   calories: number;
   fat: number;
   protein: number;
+  carbo?: number;
 };
 
 export type FoodLogResult = {
@@ -37,9 +38,11 @@ export type FoodLogResult = {
   calories: number;
   fat: number;
   protein: number;
+  carbo?: number;
   total_actual_calories?: number;
   total_actual_fatgrams?: number;
   total_actual_proteingrams?: number;
+  total_actual_carbograms?: number;
   sub_actual_id: number;
   food_id: number;
   created_at: string;
@@ -52,6 +55,7 @@ export type FoodAnalysisTotals = {
   calories: number;
   fat: number;
   protein: number;
+  carbo?: number;
 };
 
 export type FoodAnalysisItem = {
@@ -61,6 +65,7 @@ export type FoodAnalysisItem = {
   calories: number;
   fat: number;
   protein: number;
+  carbo?: number;
   confidence?: number;
   notes?: string;
 };
@@ -136,6 +141,7 @@ export function parseFoodAnalysisItems(raw: unknown): FoodAnalysisItem[] {
       calories: typeof o.calories === "number" ? Math.max(0, o.calories) : 0,
       fat: typeof o.fat === "number" ? Math.max(0, o.fat) : 0,
       protein: typeof o.protein === "number" ? Math.max(0, o.protein) : 0,
+      carbo: typeof o.carbo === "number" ? Math.max(0, o.carbo) : undefined,
       confidence: typeof o.confidence === "number" ? o.confidence : undefined,
       notes: typeof o.notes === "string" ? o.notes : undefined,
     });
