@@ -27,4 +27,10 @@ describe("mapApiError", () => {
     assert.match(text, /Data tidak valid/);
     assert.doesNotMatch(text, /Durasi latihan/);
   });
+
+  it("does not dump raw technical errors to the athlete", () => {
+    const text = mapApiError(new Error("OPENAI_API_KEY belum dikonfigurasi di server bot"));
+    assert.match(text, /gangguan/i);
+    assert.doesNotMatch(text, /OPENAI_API_KEY/);
+  });
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { formatFoodSummary, formatPendingFoodAsk, formatSaved, formatFoodUnclear, formatHelp, formatFoodNeedMacros, formatPendingFoodReplace, foodDisplayNameFromItems, PHOTO_GUIDELINES } from "./formatFood.js";
+import { formatFoodSummary, formatPendingFoodAsk, formatSaved, formatFoodUnclear, formatHelp, formatFoodNeedMacros, formatPendingFoodReplace, formatPendingPhotoReplace, formatExpired, formatUndoSaved, formatUndoIdle, foodDisplayNameFromItems, PHOTO_GUIDELINES, formatUnclear, formatConfirmIdle, formatAiReadFail } from "./formatFood.js";
 import { parseFoodAnalysisItems } from "@/clients/solidpace.js";
 import type { FoodDraft } from "./session.js";
 
@@ -106,11 +106,24 @@ describe("formatFoodSummary", () => {
 });
 
 describe("formatHelp", () => {
-  it("stays short and mentions ganti", () => {
+  it("lists food, photo, and activity features", () => {
     const text = formatHelp();
-    assert.match(text, /Bot SolidPace/);
+    assert.match(text, /3 fungsi/);
+    assert.match(text, /makanan \/ minuman/i);
+    assert.match(text, /foto/);
+    assert.match(text, /aktivitas latihan/i);
     assert.match(text, /ganti/);
-    assert.ok(text.length < 900);
+    assert.match(text, /ya/);
+    assert.match(text, /batal/);
+    assert.match(text, /pesan suara/);
+    assert.match(text, /undo/);
+  });
+
+  it("keeps a pending reminder without resetting copy", () => {
+    const text = formatHelp("Nasi ayam");
+    assert.match(text, /Nasi ayam/);
+    assert.match(text, /masih ada ringkasan/i);
+    assert.match(text, /3 fungsi/);
   });
 });
 
@@ -136,6 +149,56 @@ describe("formatFoodUnclear", () => {
     assert.match(text, /Belum kebaca/);
     assert.match(text, /Nasi ayam 300gr/);
     assert.match(text, /karbo 45/);
+  });
+});
+
+describe("formatUnclear / formatConfirmIdle / formatAiReadFail", () => {
+  it("lists food, photo, and activity without dumping the full welcome", () => {
+    const text = formatUnclear();
+    assert.match(text, /Belum kebaca/);
+    assert.match(text, /Nasi ayam 300gr/);
+    assert.match(text, /Lari 40 menit/);
+    assert.match(text, /help/);
+    assert.doesNotMatch(text, /3 fungsi/);
+  });
+
+  it("keeps confirm-idle short", () => {
+    const text = formatConfirmIdle();
+    assert.match(text, /Tidak ada ringkasan/);
+    assert.doesNotMatch(text, /3 fungsi/);
+  });
+
+  it("uses athlete copy when AI cannot read food or activity", () => {
+    const food = formatAiReadFail("food");
+    assert.match(food, /AI sedang sibuk/);
+    assert.match(food, /nasi goreng/);
+    assert.doesNotMatch(food, /OPENAI/);
+    const activity = formatAiReadFail("activity");
+    assert.match(activity, /AI sedang sibuk/);
+    assert.match(activity, /lari 40 menit/);
+    assert.doesNotMatch(activity, /OPENAI/);
+  });
+});
+
+describe("formatExpired / undo / pending photo replace", () => {
+  it("explains TTL expiry without dumping help", () => {
+    const text = formatExpired();
+    assert.match(text, /kedaluwarsa/);
+    assert.match(text, /30 menit/);
+    assert.doesNotMatch(text, /3 fungsi/);
+  });
+
+  it("points undo to the app", () => {
+    assert.match(formatUndoSaved("Nasi ayam"), /Nasi ayam/);
+    assert.match(formatUndoSaved("Nasi ayam"), /aplikasi SolidPace/);
+    assert.match(formatUndoIdle(), /Tidak ada catatan baru/);
+  });
+
+  it("asks ganti before applying a photo over pending", () => {
+    const text = formatPendingPhotoReplace("Lari", baseDraft);
+    assert.match(text, /Lari/);
+    assert.match(text, /Sate kambing/);
+    assert.match(text, /ganti/);
   });
 });
 

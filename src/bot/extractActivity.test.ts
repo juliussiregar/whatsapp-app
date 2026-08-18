@@ -10,6 +10,7 @@ import {
   normalizeActivityType,
   parseActivityHeuristic,
   parseQuickActivityCorrection,
+  isSoftActivityCorrection,
 } from "./extractActivity.js";
 import type { ActivityDraft } from "./session.js";
 
@@ -180,5 +181,13 @@ describe("clarify flow", () => {
 describe("defaultSessionName", () => {
   it("uses Indonesian label", () => {
     assert.equal(defaultSessionName("run"), "Lari via WA");
+  });
+});
+
+describe("isSoftActivityCorrection", () => {
+  it("accepts natural phrasing that is not a quick parse or a new food log", () => {
+    assert.equal(isSoftActivityCorrection("durasinya kurang"), true);
+    assert.equal(isSoftActivityCorrection("50 menit"), false);
+    assert.equal(isSoftActivityCorrection("nasi ayam 300gr"), false);
   });
 });

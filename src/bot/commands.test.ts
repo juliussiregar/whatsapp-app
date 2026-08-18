@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isConfirmNo, isConfirmYes, isMenuCommand, isReplaceCommand, normalizeCmd } from "./commands.js";
+import { isConfirmNo, isConfirmYes, isHelpCommand, isMenuCommand, isReplaceCommand, isUndoCommand, normalizeCmd } from "./commands.js";
 
 describe("normalizeCmd", () => {
   it("trims and lowercases", () => {
@@ -67,5 +67,24 @@ describe("isReplaceCommand", () => {
     assert.equal(isReplaceCommand("ganti"), true);
     assert.equal(isReplaceCommand("Ganti."), true);
     assert.equal(isReplaceCommand("ganti makanan"), false);
+  });
+});
+
+describe("isHelpCommand", () => {
+  it("matches help/menu without treating greetings as help", () => {
+    assert.equal(isHelpCommand("help"), true);
+    assert.equal(isHelpCommand("help dong"), true);
+    assert.equal(isHelpCommand("menu"), true);
+    assert.equal(isHelpCommand("Halo!"), false);
+    assert.equal(isHelpCommand("pagi"), false);
+  });
+});
+
+describe("isUndoCommand", () => {
+  it("matches exact undo aliases", () => {
+    assert.equal(isUndoCommand("salah"), true);
+    assert.equal(isUndoCommand("undo"), true);
+    assert.equal(isUndoCommand("hapus"), true);
+    assert.equal(isUndoCommand("salah simpan"), false);
   });
 });

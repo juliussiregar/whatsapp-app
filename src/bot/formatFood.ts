@@ -131,22 +131,53 @@ export function formatFoodNeedMacros(foodName: string): string {
   ].join("\n");
 }
 
-export function formatHelp(): string {
-  return [
-    "*Bot SolidPace* 👋",
+export function formatHelp(pendingLabel?: string | null): string {
+  const lines = [
+    "*Halo! Selamat datang di Bot SolidPace* 👋",
     "",
-    "*Makanan:* tulis apa yang dimakan, atau kirim foto dari atas.",
-    "Contoh: _nasi ayam 300gr malam_ · _nasi putih 200gr karbo 45_",
+    "Bot ini punya *3 fungsi*:",
     "",
-    "*Latihan:* tulis jenis + durasi (file jam tidak lewat WA).",
-    "Contoh: _lari 5km 40 menit_ · _gowes 1 jam kemarin_",
+    "*1. Catat makanan / minuman (teks)*",
+    "Tulis apa yang baru dimakan atau diminum. Bot siapkan ringkasan (kalori, protein, lemak, karbo), lalu simpan setelah Anda balas *ya*.",
+    "Contoh:",
+    "• _Saya habis makan nasi ayam 300gr untuk makan malam_",
+    "• _Nasi putih 200gr, protein 4 karbo 45_",
+    "• _Baru minum susu protein 1 botol_",
     "",
-    "*ya* simpan · *batal* buang · *ganti* pakai pesan baru",
+    "*2. Catat makanan lewat foto*",
+    "Kirim *foto dari atas*, semua makanan kelihatan. Boleh kasih caption porsi, contoh _setengah piring_ atau _makan siang_.",
     "",
-    "Nomor WA harus sudah ada di profil SolidPace.",
+    "*3. Catat aktivitas latihan (teks)*",
+    "Tulis jenis, durasi, dan tanggalnya. Bot siapkan ringkasan dulu, baru disimpan setelah *ya*.",
+    "Contoh:",
+    "• _Lari 5km, 40 menit, tanggal 17 Juli_",
+    "• _Gowes 1 jam kemarin_ · _Renang 45 menit tadi pagi_ · _Yoga 30 menit_",
+    "",
+    "📦 File jam (.fit / .tcx / .gpx) *tidak* lewat WhatsApp — unggah di aplikasi SolidPace.",
+    "",
+    "*Perintah:*",
+    "• *ya* — simpan ringkasan",
+    "• *batal* — buang ringkasan",
+    "• *ganti* — buang yang lama, pakai pesan/foto baru",
+    "• *help* / *menu* — tampilkan panduan ini (ringkasan pending tidak terbuang)",
+    "• *salah* / *undo* — yang sudah *ya* hapus di aplikasi SolidPace",
+    "",
+    "Boleh kirim *pesan suara* — bot ubah jadi teks lalu proses seperti biasa.",
+    "",
+    "⏱ Slot makan (sarapan / siang / snack / malam) bisa disebut di pesan, atau dipilih dari jam *WIB*.",
+    "Target kalori harian ada di aplikasi SolidPace.",
+    "",
+    "Nomor WhatsApp harus sudah terdaftar di profil SolidPace. Kalau belum, hubungi *admin*.",
     "",
     POWERED_BY_SOLIDPACE,
-  ].join("\n");
+  ];
+  if (pendingLabel) {
+    lines.push(
+      "",
+      `ℹ️ Masih ada ringkasan *${pendingLabel}* yang menunggu. Balas *ya* / *batal* / *ganti*.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export function formatFoodUnclear(): string {
@@ -159,6 +190,102 @@ export function formatFoodUnclear(): string {
     "• _Nasi putih 200gr, protein 4 karbo 45_",
     "",
     "Atau kirim *foto* makanan dari atas. Ketik *help* untuk panduan.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+/** Intent tidak jelas — contoh singkat makanan, foto, dan latihan. */
+export function formatUnclear(): string {
+  return [
+    "Belum kebaca. Coba salah satu:",
+    "",
+    "• Makanan: _Nasi ayam 300gr makan malam_",
+    "• Foto makanan dari atas",
+    "• Latihan: _Lari 40 menit_",
+    "",
+    "Ketik *help* untuk panduan lengkap.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatConfirmIdle(): string {
+  return [
+    "Tidak ada ringkasan yang menunggu konfirmasi.",
+    "",
+    "Kirim makanan, foto, atau latihan. Ketik *help* untuk panduan.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatExpired(): string {
+  return [
+    "Ringkasan sebelumnya sudah kedaluwarsa (lebih dari 30 menit).",
+    "",
+    "Kirim ulang makanannya, fotonya, atau latihannya.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatUndoSaved(label: string): string {
+  return [
+    `*${label}* sudah tersimpan di SolidPace.`,
+    "",
+    "Bot belum bisa menghapus catatan yang sudah masuk. Hapus lewat aplikasi SolidPace.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatUndoIdle(): string {
+  return [
+    "Tidak ada catatan baru dari chat ini.",
+    "",
+    "Yang sudah tersimpan hapus lewat aplikasi SolidPace.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatPendingPhotoReplace(pendingLabel: string, draft: FoodDraft): string {
+  return [
+    `Masih ada *${pendingLabel}* yang belum disimpan.`,
+    "",
+    `Foto ini kebaca *${draft.food_name}* (${formatQty(draft.calories)} kcal).`,
+    "Balas *ganti* untuk buang yang lama dan pakai foto ini.",
+    "*ya* — simpan yang lama · *batal* — buang semua",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatVoiceUnclear(): string {
+  return [
+    "Pesan suara belum kebaca. Coba ketik, atau kirim ulang suaranya lebih jelas.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatAiReadFail(kind: "food" | "activity"): string {
+  if (kind === "activity") {
+    return [
+      "AI sedang sibuk, belum kebaca sebagai latihan.",
+      "",
+      "Coba tulis jenis dan durasi, contoh: _lari 40 menit_ / _gowes 1 jam kemarin_.",
+      "Kalau mau catat makanan: _nasi ayam 300gr_.",
+      "",
+      POWERED_BY_SOLIDPACE,
+    ].join("\n");
+  }
+  return [
+    "AI sedang sibuk, belum kebaca sebagai makanan.",
+    "",
+    "Coba tulis ulang, contoh: _nasi goreng 250gr siang_ atau _nasi putih 200gr karbo 45_.",
+    "Kalau mau catat latihan: _lari 40 menit_.",
     "",
     POWERED_BY_SOLIDPACE,
   ].join("\n");

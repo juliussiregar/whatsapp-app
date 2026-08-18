@@ -37,6 +37,8 @@ const MENU_COMMANDS = [
   "0",
 ];
 
+const UNDO_COMMANDS = ["salah", "undo", "hapus", "/undo", "/salah"];
+
 const NAME_GREETINGS = ["hai", "halo", "hallo", "hi", "hello"];
 const TIME_GREETINGS = ["pagi", "siang", "malam"];
 const TEST_GREETINGS = ["test", "tes"];
@@ -70,6 +72,17 @@ function matchesWord(cmd: string, words: string[], opts?: MatchWordOpts): boolea
   if (!opts?.allowPrefix) return false;
   const token = firstToken(normalized);
   return words.includes(token);
+}
+
+export function isHelpCommand(cmd: string): boolean {
+  const normalized = normalizeCmd(cmd);
+  if (!normalized) return false;
+  if (MENU_COMMANDS.includes(normalized)) return true;
+  return MENU_COMMANDS.includes(firstToken(normalized));
+}
+
+export function isUndoCommand(cmd: string): boolean {
+  return UNDO_COMMANDS.includes(normalizeCmd(cmd));
 }
 
 export function isMenuCommand(cmd: string): boolean {

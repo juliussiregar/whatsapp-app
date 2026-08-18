@@ -13,6 +13,7 @@ import {
   parseQuickCorrection,
   parseStatedFoodFields,
   reconcileMacros,
+  withAiFallbackNote,
 } from "./extractFood.js";
 import type { FoodDraft } from "./session.js";
 
@@ -310,5 +311,15 @@ describe("isSoftFoodCorrection", () => {
     assert.equal(isSoftFoodCorrection("kalori kurang dikit"), true);
     assert.equal(isSoftFoodCorrection("Ayam goreng dan nasi"), false);
     assert.equal(isSoftFoodCorrection("karbo 28"), false);
+  });
+});
+
+describe("withAiFallbackNote", () => {
+  it("stamps a non-technical disclaimer once", () => {
+    const once = withAiFallbackNote({ notes: "Perkiraan porsi." });
+    assert.match(once.notes ?? "", /AI sedang sibuk/);
+    assert.doesNotMatch(once.notes ?? "", /OPENAI/);
+    const twice = withAiFallbackNote(once);
+    assert.equal(twice.notes, once.notes);
   });
 });

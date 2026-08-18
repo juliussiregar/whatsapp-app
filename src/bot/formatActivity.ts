@@ -191,3 +191,28 @@ export function formatActivityClarify(
   lines.push("", "Atau ketik *batal* untuk membatalkan.", "", POWERED_BY_SOLIDPACE);
   return lines.join("\n");
 }
+
+export function formatActivityUnclear(): string {
+  return [
+    "Belum kebaca sebagai catatan latihan.",
+    "",
+    "Coba tulis jenis dan durasi, contoh:",
+    "• _Lari 40 menit_",
+    "• _Gowes 1 jam kemarin_",
+    "• _Renang 45 menit tadi pagi_",
+    "",
+    "Kalau mau catat makanan: _nasi ayam 300gr_. Ketik *help* untuk panduan.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}
+
+export function formatActivityIncomplete(): string {
+  return [
+    "Data latihannya masih kurang.",
+    "",
+    "Tulis *jenis* dan *durasi*, contoh: _lari 40 menit_ / _gowes 1 jam_.",
+    "",
+    POWERED_BY_SOLIDPACE,
+  ].join("\n");
+}

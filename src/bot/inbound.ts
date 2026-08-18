@@ -1,13 +1,17 @@
 import type { Message } from "whatsapp-web.js";
 import { pickCategory } from "@/bot/category.js";
-import { isCasualGreeting, isConfirmNo, isConfirmYes, isMenuCommand, isReplaceCommand } from "@/bot/commands.js";
+import { isCasualGreeting, isConfirmNo, isConfirmYes, isHelpCommand, isMenuCommand, isReplaceCommand, isUndoCommand } from "@/bot/commands.js";
 import {
   activityDraftFromPartial,
+  activityLabel,
   applyActivityClarifyText,
   applyActivityCorrection,
   clarifyNeeds,
+  extractActivityCorrection,
   extractActivityFromText,
   extractedToPartial,
+  hasActivityCorrectionPatch,
+  isSoftActivityCorrection,
   mergeActivityPartial,
   parseQuickActivityCorrection,
 } from "@/bot/extractActivity.js";
@@ -26,30 +30,41 @@ import {
 } from "@/bot/extractFood.js";
 import {
   formatActivityClarify,
+  formatActivityIncomplete,
   formatActivitySaved,
   formatActivitySummary,
+  formatActivityUnclear,
   formatPendingActivityAsk,
   formatPendingActivityReplace,
 } from "@/bot/formatActivity.js";
 import {
+  formatAiReadFail,
+  formatConfirmIdle,
+  formatExpired,
   formatFoodNeedMacros,
   formatFoodSummary,
   formatFoodUnclear,
   formatHelp,
   formatPendingFoodAsk,
   formatPendingFoodReplace,
+  formatPendingPhotoReplace,
   formatSaved,
+  formatUnclear,
+  formatUndoIdle,
+  formatUndoSaved,
+  formatVoiceUnclear,
   foodDisplayNameFromItems,
   PHOTO_GUIDELINES,
   PHOTO_GUIDELINES_SHORT,
 } from "@/bot/formatFood.js";
 import { mapApiError } from "@/bot/apiError.js";
-import { classifyTextIntent, hasActivitySignal, shouldSwitchToFood } from "@/bot/intent.js";
+import { classifyTextIntent, hasActivitySignal, hasFoodSignal, hasStrongFoodSignal, shouldSwitchToFood } from "@/bot/intent.js";
 import {
   foodImageMimeErrorMessage,
   isAllowedFoodImageMime,
 } from "@/bot/media.js";
 import { downloadInboundMedia } from "@/bot/downloadMedia.js";
+import { confirmIdleKind, pendingItemLabel, pickQueuedReplace } from "@/bot/inboundPolicy.js";
 import {
   resolveUserPhoneForSolidPace,
   stableSessionKeyForMessage,
@@ -58,15 +73,19 @@ import { allowApiCall } from "@/bot/rateLimit.js";
 import { beginSave, endSave, isSaving } from "@/bot/saveLock.js";
 import {
   getSession,
+  queueFoodDraft,
   queueIncomingText,
+  rememberLastSaved,
   resetSession,
   setSession,
-  takeQueuedText,
+  takeExpiredPending,
+  takeQueuedReplace,
   type ActivityDraft,
   type ActivityPartial,
   type FoodDraft,
   type Session,
 } from "@/bot/session.js";
+import { transcribeVoice } from "@/bot/transcribeVoice.js";
 import { waLogError, waLogInfo, waLogWarn } from "@/bot/waLog.js";
 import {
   analyzeFoodImage,
@@ -98,6 +117,15 @@ function canConfirmSave(session: Session): boolean {
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+async function replyConfirmIdle(message: Message, key: string): Promise<void> {
+  const kind = confirmIdleKind(takeExpiredPending(key));
+  await safeReply(
+    message,
+    kind === "expired" ? formatExpired() : formatConfirmIdle(),
+    kind === "expired" ? "confirm_expired" : "confirm_idle",
+  );
 }
 
 async function safeReply(message: Message, text: string, ctx = "inbound"): Promise<void> {
@@ -200,11 +228,7 @@ async function handleConfirmYes(
   }
 
   if (!canConfirmSave(session)) {
-    await safeReply(
-      message,
-      "Tidak ada ringkasan yang menunggu konfirmasi.\n\nKetik *help* untuk panduan.",
-      "confirm_idle",
-    );
+    await replyConfirmIdle(message, key);
     return;
   }
 
@@ -245,6 +269,11 @@ async function handleConfirmYes(
         notes: draft.notes,
       });
       resetSession(key);
+      rememberLastSaved(key, {
+        kind: "activity",
+        label: activityLabel(draft.activity_type),
+        savedAt: Date.now(),
+      });
       await safeReply(
         message,
         formatActivitySaved(draft, result, session.fullName),
@@ -261,11 +290,7 @@ async function handleConfirmYes(
 
   if (session.state.kind !== "pending_confirm") {
     endSave(key);
-    await safeReply(
-      message,
-      "Tidak ada ringkasan yang menunggu konfirmasi.\n\nKetik *help* untuk panduan.",
-      "confirm_idle",
-    );
+    await replyConfirmIdle(message, key);
     return;
   }
 
@@ -283,6 +308,11 @@ async function handleConfirmYes(
       carbo: draft.carbo,
     });
     resetSession(key);
+    rememberLastSaved(key, {
+      kind: "food",
+      label: draft.food_name,
+      savedAt: Date.now(),
+    });
     await safeReply(message, formatSaved(draft, session.fullName, saved), "saved");
   } catch (e) {
     waLogWarn("log_food_fail", { from: message.from, err: errMsg(e) });
@@ -309,7 +339,7 @@ async function settleActivityPartial(
 
   const draft = activityDraftFromPartial(partial);
   if (!draft) {
-    await safeReply(message, formatHelp(), "activity_incomplete");
+    await safeReply(message, formatActivityIncomplete(), "activity_incomplete");
     return;
   }
 
@@ -342,8 +372,6 @@ async function handleActivityClarify(
     return;
   }
 
-  await safeReply(message, "⏳ Melengkapi data aktivitas…", "activity_clarify_busy");
-
   try {
     const extracted = await extractActivityFromText(text);
     if (extracted.is_activity_log || extracted.activity_type || extracted.duration_seconds) {
@@ -365,6 +393,34 @@ async function handleActivityClarify(
   await settleActivityPartial(message, key, session, partial, "activity_clarify_done");
 }
 
+async function applyPendingActivityCorrection(
+  message: Message,
+  key: string,
+  session: Session,
+  existingDraft: ActivityDraft,
+  patch: Parameters<typeof applyActivityCorrection>[1],
+  ctx: string,
+): Promise<void> {
+  const applied = applyActivityCorrection(existingDraft, patch);
+  if (applied.kind === "clarify") {
+    session.state = {
+      kind: "pending_activity_clarify",
+      partial: applied.partial,
+      needs: applied.needs,
+    };
+    setSession(key, session);
+    await safeReply(
+      message,
+      formatActivityClarify(applied.partial, applied.needs),
+      `${ctx}_clarify`,
+    );
+    return;
+  }
+  session.state = { kind: "pending_confirm_activity", draft: applied.draft };
+  setSession(key, session);
+  await safeReply(message, formatActivitySummary(applied.draft), ctx);
+}
+
 async function handleActivityText(
   message: Message,
   key: string,
@@ -372,28 +428,53 @@ async function handleActivityText(
   user: SolidPaceUser,
   text: string,
   existingDraft?: ActivityDraft,
+  skipCrossRoute = false,
 ): Promise<void> {
   if (existingDraft) {
     const quick = parseQuickActivityCorrection(text);
     if (quick) {
-      const applied = applyActivityCorrection(existingDraft, quick);
-      if (applied.kind === "clarify") {
-        session.state = {
-          kind: "pending_activity_clarify",
-          partial: applied.partial,
-          needs: applied.needs,
-        };
-        setSession(key, session);
-        await safeReply(
-          message,
-          formatActivityClarify(applied.partial, applied.needs),
-          "activity_correct_clarify",
-        );
+      await applyPendingActivityCorrection(
+        message,
+        key,
+        session,
+        existingDraft,
+        quick,
+        "activity_confirm_corrected",
+      );
+      return;
+    }
+
+    if (isSoftActivityCorrection(text)) {
+      if (!allowApiCall(key)) {
+        await safeReply(message, formatPendingActivityAsk(existingDraft), "activity_pending_ask");
         return;
       }
-      session.state = { kind: "pending_confirm_activity", draft: applied.draft };
-      setSession(key, session);
-      await safeReply(message, formatActivitySummary(applied.draft), "activity_confirm_corrected");
+      try {
+        const correction = await extractActivityCorrection(text, existingDraft);
+        if (hasActivityCorrectionPatch(correction)) {
+          await applyPendingActivityCorrection(
+            message,
+            key,
+            getSession(key),
+            existingDraft,
+            correction,
+            "activity_confirm_corrected_ai",
+          );
+          return;
+        }
+      } catch (e) {
+        waLogWarn("activity_correct_fail", { from: message.from, err: errMsg(e) });
+      }
+      if (shouldSwitchToFood(text) || hasActivitySignal(text) || looksLikeNewFoodEntry(text)) {
+        queueIncomingText(key, text);
+        await safeReply(message, formatPendingActivityReplace(existingDraft, text), "activity_pending_replace");
+        return;
+      }
+      await safeReply(
+        message,
+        `Koreksinya belum kebaca.\n\n${formatPendingActivityAsk(existingDraft)}`,
+        "activity_pending_ask",
+      );
       return;
     }
 
@@ -416,18 +497,12 @@ async function handleActivityText(
     return;
   }
 
-  await safeReply(message, "⏳ Membaca aktivitas Anda…", "activity_extract_busy");
-
   let extracted;
   try {
     extracted = await extractActivityFromText(text);
   } catch (e) {
     waLogWarn("activity_extract_fail", { from: message.from, err: errMsg(e) });
-    await safeReply(
-      message,
-      `⚠️ Gagal membaca pesan aktivitas: ${errMsg(e)}\n\nCoba tulis ulang, contoh: _lari 40 menit tanggal 17 Juli_`,
-      "activity_extract_fail",
-    );
+    await safeReply(message, formatAiReadFail("activity"), "activity_extract_fail");
     return;
   }
 
@@ -447,7 +522,11 @@ async function handleActivityText(
       );
       return;
     }
-    await safeReply(message, formatHelp(), "not_activity");
+    if (!skipCrossRoute && (hasStrongFoodSignal(text) || looksLikeNewFoodEntry(text))) {
+      await handleFoodText(message, key, getSession(key), user, text, undefined, true);
+      return;
+    }
+    await safeReply(message, formatActivityUnclear(), "not_activity");
     return;
   }
 
@@ -492,6 +571,7 @@ async function handleFoodText(
   user: SolidPaceUser,
   text: string,
   existingDraft?: FoodDraft,
+  skipCrossRoute = false,
 ): Promise<void> {
   if (existingDraft) {
     if (isFoodCorrectionText(text)) {
@@ -507,7 +587,6 @@ async function handleFoodText(
         await safeReply(message, formatPendingFoodAsk(existingDraft), "food_pending_ask");
         return;
       }
-      await safeReply(message, "⏳ Membaca koreksinya…", "correct_busy");
       try {
         const correction = await extractFoodCorrection(text, existingDraft);
         if (hasCorrectionPatch(correction)) {
@@ -525,6 +604,17 @@ async function handleFoodText(
       } catch (e) {
         waLogWarn("food_correct_fail", { from: message.from, err: errMsg(e) });
       }
+      if (looksLikeNewFoodEntry(text) || hasActivitySignal(text)) {
+        queueIncomingText(key, text);
+        await safeReply(message, formatPendingFoodReplace(existingDraft, text), "food_pending_replace");
+        return;
+      }
+      await safeReply(
+        message,
+        `Koreksinya belum kebaca.\n\n${formatPendingFoodAsk(existingDraft)}`,
+        "food_pending_ask",
+      );
+      return;
     }
 
     if (looksLikeNewFoodEntry(text) || hasActivitySignal(text)) {
@@ -546,27 +636,25 @@ async function handleFoodText(
     return;
   }
 
-  await safeReply(message, "⏳ Membaca makanan dan menghitung gizinya…", "extract_busy");
-
   let extracted;
   try {
     extracted = await extractFoodFromText(text);
   } catch (e) {
     waLogWarn("extract_fail", { from: message.from, err: errMsg(e) });
-    await safeReply(
-      message,
-      `⚠️ Gagal membaca pesan makanan.\n\nCoba tulis ulang, contoh: _nasi goreng 250gr siang_ atau _nasi putih 200gr karbo 45_`,
-      "extract_fail",
-    );
+    await safeReply(message, formatAiReadFail("food"), "extract_fail");
     return;
   }
 
   if (!extracted.is_food_log || !extracted.food_name) {
-    if (hasActivitySignal(text)) {
-      await handleActivityText(message, key, getSession(key), user, text);
+    if (!skipCrossRoute && hasActivitySignal(text)) {
+      await handleActivityText(message, key, getSession(key), user, text, undefined, true);
       return;
     }
-    await safeReply(message, formatFoodUnclear(), "not_food");
+    await safeReply(
+      message,
+      hasFoodSignal(text) ? formatFoodUnclear() : formatUnclear(),
+      "not_food",
+    );
     return;
   }
 
@@ -737,13 +825,17 @@ async function handleFoodImage(
       items.length ? items : undefined,
     );
 
-    const replacing = isPendingSession(getSession(key));
+    const live = getSession(key);
+    if (isPendingSession(live)) {
+      queueFoodDraft(key, draft);
+      const label = pendingItemLabel(live) ?? "catatan sebelumnya";
+      await safeReply(message, formatPendingPhotoReplace(label, draft), "food_pending_photo_replace");
+      return;
+    }
+
     session.state = { kind: "pending_confirm", draft };
     setSession(key, session);
-    const summary = replacing
-      ? `${formatFoodSummary(draft)}\n\nRingkasan sebelumnya diganti foto ini.`
-      : formatFoodSummary(draft);
-    await safeReply(message, summary, "confirm_image");
+    await safeReply(message, formatFoodSummary(draft), "confirm_image");
   } catch (e) {
     waLogWarn("analyze_fail", { from: message.from, err: errMsg(e) });
     await safeReply(message, mapApiError(e), "analyze_fail");
@@ -765,8 +857,8 @@ export async function handleInboundMessage(message: Message): Promise<void> {
   const key = await stableSessionKeyForMessage(message);
   const session = getSession(key);
   const bodyText = message.body ?? "";
-  const cmd = bodyText.trim();
-  const isTextOnly = !message.hasMedia;
+  let cmd = bodyText.trim();
+  let isTextOnly = !message.hasMedia;
 
   waLogInfo("inbound", {
     from: message.from,
@@ -785,10 +877,36 @@ export async function handleInboundMessage(message: Message): Promise<void> {
     return;
   }
 
-  // Global commands & sapaan
-  if (isMenuCommand(cmd)) {
-    resetSession(key);
-    await safeReply(message, formatHelp(), "welcome");
+  if (message.hasMedia && (message.type === "ptt" || message.type === "audio")) {
+    if (!allowApiCall(key)) {
+      await safeReply(
+        message,
+        "🚦 Terlalu banyak permintaan. Tunggu sebentar lalu kirim suara lagi.",
+        "rate_limit",
+      );
+      return;
+    }
+    try {
+      const media = await downloadInboundMedia(message);
+      const base64 = media.data.replace(/^data:[^;]+;base64,/, "");
+      const buffer = Buffer.from(base64, "base64");
+      const text = await transcribeVoice(buffer, media.mimetype || "audio/ogg");
+      if (!text) {
+        await safeReply(message, formatVoiceUnclear(), "voice_unclear");
+        return;
+      }
+      cmd = text.trim();
+      isTextOnly = true;
+      waLogInfo("voice_transcribed", { from: message.from, preview: cmd.slice(0, 80) });
+    } catch (e) {
+      waLogWarn("voice_transcribe_fail", { from: message.from, err: errMsg(e) });
+      await safeReply(message, formatVoiceUnclear(), "voice_fail");
+      return;
+    }
+  }
+
+  if (isHelpCommand(cmd) || (isPendingSession(session) && isMenuCommand(cmd))) {
+    await safeReply(message, formatHelp(pendingItemLabel(session)), "welcome");
     return;
   }
 
@@ -819,33 +937,41 @@ export async function handleInboundMessage(message: Message): Promise<void> {
   try {
     phone = await resolveUserPhoneForSolidPace(message);
   } catch (e) {
+    waLogWarn("phone_resolve_fail", { from: message.from, err: errMsg(e) });
     await safeReply(
       message,
-      `⚠️ ${errMsg(e)}\n\nHubungi *admin* jika masalah berlanjut.`,
+      "Nomor WhatsApp tidak terbaca. Hubungi *admin* jika masalah berlanjut.",
       "phone_resolve_fail",
     );
     return;
   }
 
   if (isTextOnly && isReplaceCommand(cmd) && isPendingSession(session)) {
-    const queued = takeQueuedText(key);
+    const picked = pickQueuedReplace(takeQueuedReplace(key));
     resetSession(key);
-    if (!queued) {
-      await safeReply(
-        message,
-        "Ringkasan lama dibuang. Kirim makanan, foto, atau aktivitas barunya.",
-        "replaced_idle",
-      );
+    if (picked.kind === "food") {
+      const live = getSession(key);
+      live.state = { kind: "pending_confirm", draft: picked.draft };
+      setSession(key, live);
+      await safeReply(message, formatFoodSummary(picked.draft), "replaced_photo");
       return;
     }
-    const user = await ensureUser(message, getSession(key), phone, key);
-    if (!user) return;
-    const intent = classifyTextIntent(queued);
-    if (intent === "activity") {
-      await handleActivityText(message, key, getSession(key), user, queued);
-    } else {
-      await handleFoodText(message, key, getSession(key), user, queued);
+    if (picked.kind === "text") {
+      const user = await ensureUser(message, getSession(key), phone, key);
+      if (!user) return;
+      const intent = classifyTextIntent(picked.text);
+      if (intent === "activity") {
+        await handleActivityText(message, key, getSession(key), user, picked.text);
+      } else {
+        await handleFoodText(message, key, getSession(key), user, picked.text);
+      }
+      return;
     }
+    await safeReply(
+      message,
+      "Ringkasan lama dibuang. Kirim makanan, foto, atau aktivitas barunya.",
+      "replaced_idle",
+    );
     return;
   }
 
@@ -860,7 +986,7 @@ export async function handleInboundMessage(message: Message): Promise<void> {
   }
 
   // Media routing — sebelum konfirmasi teks agar foto+caption tidak salah dibaca sebagai "ya"
-  if (message.hasMedia) {
+  if (message.hasMedia && !isTextOnly) {
     if (message.type === "image") {
       const user = await ensureUser(message, session, phone, key);
       if (!user) return;
@@ -868,10 +994,10 @@ export async function handleInboundMessage(message: Message): Promise<void> {
       return;
     }
 
-    if (message.type === "sticker" || message.type === "video" || message.type === "ptt" || message.type === "audio") {
+    if (message.type === "sticker" || message.type === "video") {
       await safeReply(
         message,
-        "⚠️ Format ini belum didukung.\n\nKirim *foto makanan*, *tulis* makanannya, atau *catat aktivitas* (contoh: _lari 40 menit_). Ketik *help* untuk panduan.",
+        "⚠️ Format ini belum didukung.\n\nKirim *foto makanan*, *tulis* makanannya, *pesan suara*, atau *catat aktivitas* (contoh: _lari 40 menit_). Ketik *help* untuk panduan.",
         "unsupported_media",
       );
       return;
@@ -896,17 +1022,23 @@ export async function handleInboundMessage(message: Message): Promise<void> {
       await handleConfirmYes(message, key, getSession(key), phone);
       return;
     }
-    await safeReply(
-      message,
-      "Tidak ada ringkasan yang menunggu konfirmasi.\n\n" + formatHelp(),
-      "confirm_idle",
-    );
+    await replyConfirmIdle(message, key);
     return;
   }
 
   // Empty body (e.g. contact share)
   if (!cmd.trim()) {
-    await safeReply(message, formatHelp(), "empty");
+    await safeReply(message, formatUnclear(), "empty");
+    return;
+  }
+
+  if (isTextOnly && isUndoCommand(cmd) && !isPendingSession(getSession(key))) {
+    const last = getSession(key).lastSaved;
+    await safeReply(
+      message,
+      last ? formatUndoSaved(last.label) : formatUndoIdle(),
+      last ? "undo_saved" : "undo_idle",
+    );
     return;
   }
 
@@ -941,6 +1073,6 @@ export async function handleInboundMessage(message: Message): Promise<void> {
     key,
     getSession(key),
     user,
-    message.body ?? "",
+    cmd,
   );
 }

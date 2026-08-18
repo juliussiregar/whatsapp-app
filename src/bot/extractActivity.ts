@@ -13,7 +13,8 @@ import {
   wibParts,
   type DurationParse,
 } from "@/bot/activityTime.js";
-import { shouldSwitchToFood } from "@/bot/intent.js";
+import { withAiFallbackNote } from "@/bot/extractFood.js";
+import { hasStrongFoodSignal, shouldSwitchToFood } from "@/bot/intent.js";
 import { getOpenAiApiKey, getOpenAiModel, getOpenAiTimeoutMs } from "@/config.js";
 import type { ActivityClarifyNeed, ActivityDraft, ActivityPartial } from "@/bot/session.js";
 
@@ -718,21 +719,93 @@ export function parseQuickActivityCorrection(
   };
 }
 
+const ACTIVITY_SOFT_HINT_RE =
+  /\b(menit|jam|km|kilometer|kemarin|besok|tadi|elevasi|cadence|durasi|detik|jarak|lebih\s+lama|kurang|salah)\b/i;
+
+/** Koreksi natural saat ringkasan aktivitas masih pending — boleh ke AI. */
+export function isSoftActivityCorrection(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 80) return false;
+  if (shouldSwitchToFood(t) || hasStrongFoodSignal(t)) return false;
+  if (parseQuickActivityCorrection(t)) return false;
+  return ACTIVITY_SOFT_HINT_RE.test(t);
+}
+
+function emptyExtractedActivity(): ExtractedActivity {
+  return {
+    is_activity_log: false,
+    activity_type: null,
+    session_name: null,
+    session_date: null,
+    duration_seconds: null,
+    duration_unit_unclear: false,
+    unclear_duration_number: null,
+    date_ambiguous: false,
+    distance_km: null,
+    elevation_gain: null,
+    hr_avg: null,
+    hr_max: null,
+    cadence_avg: null,
+    calories: null,
+    notes: null,
+  };
+}
+
+export function emptyActivityCorrection(): ActivityCorrection {
+  return {
+    is_correction: false,
+    activity_type: null,
+    session_name: null,
+    session_date: null,
+    duration_seconds: null,
+    duration_unit_unclear: false,
+    unclear_duration_number: null,
+    date_ambiguous: false,
+    distance_km: null,
+    elevation_gain: null,
+    hr_avg: null,
+    hr_max: null,
+    cadence_avg: null,
+    calories: null,
+    notes: null,
+    clock_hour: null,
+    clock_minute: null,
+  };
+}
+
+export function hasActivityCorrectionPatch(patch: ActivityCorrection): boolean {
+  return (
+    patch.is_correction &&
+    (patch.activity_type != null ||
+      patch.session_name != null ||
+      patch.session_date != null ||
+      patch.duration_seconds != null ||
+      patch.duration_unit_unclear ||
+      patch.distance_km != null ||
+      patch.elevation_gain != null ||
+      patch.hr_avg != null ||
+      patch.hr_max != null ||
+      patch.cadence_avg != null ||
+      patch.calories != null ||
+      patch.clock_hour != null)
+  );
+}
+
 export async function extractActivityFromText(
   text: string,
   now = new Date(),
 ): Promise<ExtractedActivity> {
   const heuristic = parseActivityHeuristic(text, now);
-  const completeHeuristic = (): ExtractedActivity => ({
-    ...heuristic,
-    session_date: heuristic.session_date ?? todaySessionDateIso(now),
-  });
+  const useFallback = (): ExtractedActivity => {
+    if (!heuristic.is_activity_log) return emptyExtractedActivity();
+    return withAiFallbackNote({
+      ...heuristic,
+      session_date: heuristic.session_date ?? todaySessionDateIso(now),
+    });
+  };
 
   const client = getClient();
-  if (!client) {
-    if (heuristic.is_activity_log) return completeHeuristic();
-    throw new Error("OPENAI_API_KEY belum dikonfigurasi di server bot");
-  }
+  if (!client) return useFallback();
 
   try {
     const completion = await client.chat.completions.create({
@@ -750,17 +823,11 @@ export async function extractActivityFromText(
     try {
       parsed = JSON.parse(content) as Record<string, unknown>;
     } catch {
-      throw new Error("Gagal membaca hasil ekstraksi aktivitas");
+      return useFallback();
     }
     return normalizeExtracted(parsed, text, now);
-  } catch (e) {
-    if (heuristic.is_activity_log && (heuristic.activity_type || heuristic.duration_seconds)) {
-      return {
-        ...heuristic,
-        session_date: heuristic.session_date ?? todaySessionDateIso(now),
-      };
-    }
-    throw e;
+  } catch {
+    return useFallback();
   }
 }
 
@@ -773,47 +840,49 @@ export async function extractActivityCorrection(
   if (quick) return quick;
 
   const client = getClient();
-  if (!client) {
-    throw new Error("OPENAI_API_KEY belum dikonfigurasi di server bot");
-  }
+  if (!client) return emptyActivityCorrection();
 
-  const completion = await client.chat.completions.create({
-    model: getOpenAiModel(),
-    temperature: 0.1,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: `${CORRECTION_SYSTEM}\n\n${todayPrompt(now)}` },
-      {
-        role: "user",
-        content: [
-          "Draft saat ini:",
-          JSON.stringify({
-            activity_type: draft.activity_type,
-            session_name: draft.session_name,
-            session_date: draft.session_date,
-            duration: draft.duration,
-            distance: draft.distance,
-            elevation_gain: draft.elevation_gain,
-            hr_avg: draft.hr_avg,
-            hr_max: draft.hr_max,
-            cadence_avg: draft.cadence_avg,
-            calories: draft.calories,
-          }),
-          "",
-          "Pesan koreksi user:",
-          text.slice(0, 1000),
-        ].join("\n"),
-      },
-    ],
-  });
-
-  const content = completion.choices[0]?.message?.content ?? "{}";
-  let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    throw new Error("Gagal membaca koreksi aktivitas");
-  }
+    const completion = await client.chat.completions.create({
+      model: getOpenAiModel(),
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: `${CORRECTION_SYSTEM}\n\n${todayPrompt(now)}` },
+        {
+          role: "user",
+          content: [
+            "Draft saat ini:",
+            JSON.stringify({
+              activity_type: draft.activity_type,
+              session_name: draft.session_name,
+              session_date: draft.session_date,
+              duration: draft.duration,
+              distance: draft.distance,
+              elevation_gain: draft.elevation_gain,
+              hr_avg: draft.hr_avg,
+              hr_max: draft.hr_max,
+              cadence_avg: draft.cadence_avg,
+              calories: draft.calories,
+            }),
+            "",
+            "Pesan koreksi user:",
+            text.slice(0, 1000),
+          ].join("\n"),
+        },
+      ],
+    });
 
-  return normalizeCorrection(parsed, text, now);
+    const content = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(content) as Record<string, unknown>;
+    } catch {
+      return emptyActivityCorrection();
+    }
+
+    return normalizeCorrection(parsed, text, now);
+  } catch {
+    return emptyActivityCorrection();
+  }
 }

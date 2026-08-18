@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   formatActivityClarify,
+  formatActivityIncomplete,
   formatActivitySaved,
   formatActivitySummary,
+  formatActivityUnclear,
   formatLoadOverlap,
 } from "./formatActivity.js";
 import type { ActivityDraft } from "./session.js";
@@ -107,5 +109,22 @@ describe("formatLoadOverlap", () => {
   it("returns null when nothing overlaps", () => {
     assert.equal(formatLoadOverlap(null), null);
     assert.equal(formatLoadOverlap({ overlapping: false }), null);
+  });
+});
+
+describe("formatActivityUnclear / formatActivityIncomplete", () => {
+  it("asks for a short activity example instead of the full welcome", () => {
+    const text = formatActivityUnclear();
+    assert.match(text, /Belum kebaca sebagai catatan latihan/);
+    assert.match(text, /Lari 40 menit/);
+    assert.match(text, /nasi ayam/);
+    assert.doesNotMatch(text, /3 fungsi/);
+  });
+
+  it("asks for type and duration when the draft cannot be completed", () => {
+    const text = formatActivityIncomplete();
+    assert.match(text, /masih kurang/i);
+    assert.match(text, /lari 40 menit/);
+    assert.doesNotMatch(text, /3 fungsi/);
   });
 });

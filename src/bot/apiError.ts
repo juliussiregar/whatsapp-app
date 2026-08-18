@@ -49,5 +49,5 @@ export function mapApiError(e: unknown): string {
   if (e instanceof Error && (e.name === "TimeoutError" || e.message.includes("aborted"))) {
     return "Permintaan ke SolidPace terlalu lama. Coba lagi dalam beberapa saat.";
   }
-  return `Terjadi kesalahan: ${errMsg(e)}`;
+  return "Sedang ada gangguan. Coba lagi beberapa saat, atau ketik *help* untuk panduan.";
 }

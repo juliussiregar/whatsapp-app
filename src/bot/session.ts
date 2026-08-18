@@ -55,6 +55,12 @@ export type SessionState =
   | { kind: "pending_confirm_activity"; draft: ActivityDraft }
   | { kind: "pending_activity_clarify"; partial: ActivityPartial; needs: ActivityClarifyNeed[] };
 
+export type LastSaved = {
+  kind: "food" | "activity";
+  label: string;
+  savedAt: number;
+};
+
 export type Session = {
   state: SessionState;
   /** Cache singkat hasil resolve user */
@@ -63,6 +69,12 @@ export type Session = {
   categories?: Array<{ category_id: number; name: string }>;
   /** Pesan baru yang menunggu *ganti*. */
   queuedText?: string;
+  /** Draft foto yang menunggu *ganti*. */
+  queuedFoodDraft?: FoodDraft;
+  /** Ringkasan pending habis TTL — untuk copy kedaluwarsa. */
+  expiredPending?: boolean;
+  /** Catatan terakhir yang berhasil *ya*, untuk perintah salah/undo. */
+  lastSaved?: LastSaved;
   updatedAt: number;
 };
 
@@ -78,10 +90,31 @@ function persistPath(): string | null {
   return path.join(process.cwd(), "data", "bot-sessions.json");
 }
 
+function isPendingState(state: SessionState): boolean {
+  return state.kind !== "idle";
+}
+
+function hasWorkInFlight(s: Session): boolean {
+  return isPendingState(s.state) || Boolean(s.queuedText) || Boolean(s.queuedFoodDraft);
+}
+
 function prune(): void {
   const now = Date.now();
   for (const [k, s] of store) {
-    if (now - s.updatedAt > SESSION_TTL_MS) store.delete(k);
+    if (now - s.updatedAt <= SESSION_TTL_MS) continue;
+    if (hasWorkInFlight(s)) {
+      store.set(k, {
+        state: { kind: "idle" },
+        userId: s.userId,
+        fullName: s.fullName,
+        categories: s.categories,
+        lastSaved: s.lastSaved,
+        expiredPending: true,
+        updatedAt: now,
+      });
+    } else {
+      store.delete(k);
+    }
   }
 }
 
@@ -132,6 +165,7 @@ export function getSession(key: string): Session {
 
 export function setSession(key: string, session: Session): void {
   session.updatedAt = Date.now();
+  if (isPendingState(session.state)) session.expiredPending = false;
   store.set(key, session);
   schedulePersist();
 }
@@ -143,15 +177,49 @@ export function resetSession(key: string): void {
     userId: prev.userId,
     fullName: prev.fullName,
     categories: prev.categories,
+    lastSaved: prev.lastSaved,
     updatedAt: Date.now(),
   });
+}
+
+export function rememberLastSaved(key: string, entry: LastSaved): void {
+  const session = getSession(key);
+  session.lastSaved = entry;
+  setSession(key, session);
+}
+
+export function takeExpiredPending(key: string): boolean {
+  const session = getSession(key);
+  if (!session.expiredPending) return false;
+  session.expiredPending = false;
+  setSession(key, session);
+  return true;
 }
 
 export function queueIncomingText(key: string, text: string): Session {
   const session = getSession(key);
   session.queuedText = text.trim();
+  session.queuedFoodDraft = undefined;
   setSession(key, session);
   return session;
+}
+
+export function queueFoodDraft(key: string, draft: FoodDraft): Session {
+  const session = getSession(key);
+  session.queuedFoodDraft = draft;
+  session.queuedText = undefined;
+  setSession(key, session);
+  return session;
+}
+
+export function takeQueuedReplace(key: string): { text?: string; food?: FoodDraft } {
+  const session = getSession(key);
+  const text = session.queuedText?.trim() || undefined;
+  const food = session.queuedFoodDraft;
+  session.queuedText = undefined;
+  session.queuedFoodDraft = undefined;
+  setSession(key, session);
+  return { text, food };
 }
 
 export function takeQueuedText(key: string): string | undefined {
@@ -160,6 +228,14 @@ export function takeQueuedText(key: string): string | undefined {
   session.queuedText = undefined;
   setSession(key, session);
   return queued || undefined;
+}
+
+/** Tes: mundurkan updatedAt tanpa menyentuh TTL via setSession. */
+export function ageSessionForTests(key: string, ageMs: number): void {
+  const session = store.get(key);
+  if (!session) return;
+  session.updatedAt = Date.now() - ageMs;
+  store.set(key, session);
 }
 
 export function resetSessionsForTests(): void {

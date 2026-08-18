@@ -459,8 +459,18 @@ export function isSoftFoodCorrection(text: string): boolean {
   return CORRECTION_HINT_RE.test(t);
 }
 
+export const AI_FALLBACK_DISCLAIMER =
+  "AI sedang sibuk. Ringkasan ini disusun dari teks kamu — cek dulu sebelum balas *ya*.";
+
 export const CALORIES_ADJUSTED_NOTE =
   "Kalori disesuaikan biar pas dengan karbo/protein/lemak yang baru.";
+
+export function withAiFallbackNote<T extends { notes: string | null }>(extracted: T): T {
+  const notes = extracted.notes?.includes(AI_FALLBACK_DISCLAIMER)
+    ? extracted.notes
+    : [extracted.notes, AI_FALLBACK_DISCLAIMER].filter(Boolean).join(" ");
+  return { ...extracted, notes };
+}
 
 export function hasFoodMacros(extracted: {
   calories: number | null;
@@ -681,20 +691,36 @@ async function completeJson(system: string, user: string, temperature: number): 
   }
 }
 
+export function emptyCorrection(): FoodCorrection {
+  return {
+    is_correction: false,
+    food_name: null,
+    serving: null,
+    suffix_serving: null,
+    calories: null,
+    fat: null,
+    protein: null,
+    carbo: null,
+    category_hint: null,
+    notes: null,
+  };
+}
+
 export async function extractFoodFromText(text: string): Promise<ExtractedFood> {
   const fallback = heuristicExtracted(text);
 
-  if (!getClient()) {
-    if (fallback?.is_food_log) return mergeExtractedFood(fallback, text);
-    throw new Error("OPENAI_API_KEY belum dikonfigurasi di server bot");
-  }
+  const useFallback = (): ExtractedFood => {
+    if (!fallback?.is_food_log) return emptyExtracted();
+    return withAiFallbackNote(mergeExtractedFood(fallback, text));
+  };
+
+  if (!getClient()) return useFallback();
 
   try {
     const parsed = await completeJson(SYSTEM, text.slice(0, 2000), 0.2);
     return mergeExtractedFood(normalizeExtracted(parsed), text);
-  } catch (e) {
-    if (fallback?.is_food_log) return mergeExtractedFood(fallback, text);
-    throw e instanceof Error ? e : new Error("Gagal membaca hasil ekstraksi makanan");
+  } catch {
+    return useFallback();
   }
 }
 
@@ -705,26 +731,31 @@ export async function extractFoodCorrection(
   const quick = parseQuickCorrection(text);
   if (quick) return quick;
 
-  const parsed = await completeJson(
-    CORRECTION_SYSTEM,
-    [
-      "Draft saat ini:",
-      JSON.stringify({
-        food_name: draft.food_name,
-        serving: draft.serving,
-        suffix_serving: draft.suffix_serving,
-        calories: draft.calories,
-        fat: draft.fat,
-        protein: draft.protein,
-        carbo: draft.carbo,
-        category_name: draft.category_name,
-      }),
-      "",
-      "Pesan koreksi user:",
-      text.slice(0, 1000),
-    ].join("\n"),
-    0.1,
-  );
+  if (!getClient()) return emptyCorrection();
 
-  return normalizeCorrection(parsed);
+  try {
+    const parsed = await completeJson(
+      CORRECTION_SYSTEM,
+      [
+        "Draft saat ini:",
+        JSON.stringify({
+          food_name: draft.food_name,
+          serving: draft.serving,
+          suffix_serving: draft.suffix_serving,
+          calories: draft.calories,
+          fat: draft.fat,
+          protein: draft.protein,
+          carbo: draft.carbo,
+          category_name: draft.category_name,
+        }),
+        "",
+        "Pesan koreksi user:",
+        text.slice(0, 1000),
+      ].join("\n"),
+      0.1,
+    );
+    return normalizeCorrection(parsed);
+  } catch {
+    return emptyCorrection();
+  }
 }
