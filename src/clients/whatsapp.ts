@@ -1,9 +1,18 @@
 import { promises as fs } from "fs";
-import { Client } from "whatsapp-web.js";
+import { createRequire } from "module";
+import wwebjs from "whatsapp-web.js";
+import type { Client as WaClient } from "whatsapp-web.js";
 import qrCode from "qrcode-terminal";
 import QRCode from "qrcode";
 import { applySerializedIdCompat } from "@/bot/waSerializedCompat.js";
 import { ensureWhatsAppStore } from "@/bot/waStore.js";
+
+const { Client } = wwebjs;
+type Client = WaClient;
+const requireWwebjs = createRequire(import.meta.url);
+const { LoadUtils } = requireWwebjs(
+  "whatsapp-web.js/src/util/Injected/Utils.js",
+) as { LoadUtils: () => void };
 
 const AUTH_DIR = "./.wwebjs_auth";
 
@@ -130,6 +139,191 @@ function startAutoReconnectTimer() {
   }, AUTO_RECONNECT_TIMEOUT_MS);
 }
 
+// ── Health watchdog ─────────────────────────────────────────────────
+/**
+ * WA Web bisa reload halaman sendiri (update versi) tanpa event `disconnected`:
+ * window.Store/WWebJS hilang, tapi state tetap "ready".
+ */
+const HEALTH_CHECK_INTERVAL_MS = 60 * 1000;
+const HEALTH_GRACE_AFTER_READY_MS = 3 * 60 * 1000;
+const HEALTH_MAX_FAILURES = 2;
+let healthTimer: ReturnType<typeof setInterval> | null = null;
+let healthFailures = 0;
+let reconnectInProgress = false;
+
+async function isPageHealthy(client: Client): Promise<boolean> {
+  const page = (client as Client & {
+    pupPage?: { evaluate: (fn: string) => Promise<unknown>; isClosed?: () => boolean };
+  }).pupPage;
+  if (!page || page.isClosed?.()) return false;
+  try {
+    const ok = await Promise.race([
+      page.evaluate(
+        `(() => !!(window.Store && window.Store.Msg && window.Store.Chat && window.WWebJS))()`,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve(false), 20000)),
+    ]);
+    return ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function runHealthCheck() {
+  if (clientState !== "ready" || reconnectInProgress) {
+    healthFailures = 0;
+    return;
+  }
+  if (Date.now() - stateChangedAt.getTime() < HEALTH_GRACE_AFTER_READY_MS) return;
+
+  if (await isPageHealthy(whatsAppClient)) {
+    healthFailures = 0;
+    return;
+  }
+
+  healthFailures++;
+  console.warn(
+    `[WA Health] WA Web page unhealthy (${healthFailures}/${HEALTH_MAX_FAILURES})`,
+  );
+  if (healthFailures < HEALTH_MAX_FAILURES) return;
+
+  healthFailures = 0;
+  console.warn("[WA Health] Store/WWebJS hilang saat state ready — auto-reconnect");
+  try {
+    await reconnect();
+  } catch (err) {
+    console.error("[WA Health] Auto-reconnect failed:", err);
+  }
+}
+
+function startHealthWatchdog() {
+  if (healthTimer) return;
+  healthTimer = setInterval(() => {
+    void runHealthCheck();
+  }, HEALTH_CHECK_INTERVAL_MS);
+}
+
+/**
+ * Fork DouglasReisofc bisa emit READY lewat force-timer TANPA attachEventListeners,
+ * dan WA Web baru tidak expose Store.Call (attachEventListeners crash di
+ * `Store.Call.on`). Stub Call, inject LoadUtils (window.WWebJS untuk send/getChat),
+ * lalu attach.
+ */
+async function ensureWaMessageListeners(client: Client): Promise<void> {
+  const anyClient = client as Client & {
+    attachEventListeners?: () => Promise<void>;
+    _eventListenersAttached?: boolean;
+    pupPage?: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      evaluate: (pageFunction: any, ...args: unknown[]) => Promise<unknown>;
+    };
+  };
+  if (typeof anyClient.attachEventListeners !== "function") return;
+
+  const maxAttempts = 40;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (anyClient._eventListenersAttached) return;
+
+    const page = anyClient.pupPage;
+    let storeProbe: Record<string, boolean> | null = null;
+    if (page) {
+      try {
+        storeProbe = (await page.evaluate(`(() => {
+          const s = window.Store;
+          if (!s) return { Msg: false, Chat: false, AppState: false, Conn: false, Call: false, getChat: false };
+          if (!s.Call || typeof s.Call.on !== 'function') {
+            const stub = { on: function () {}, off: function () {}, getModelsArray: function () { return []; } };
+            try {
+              s.Call = stub;
+            } catch (e) {
+              try {
+                Object.defineProperty(s, 'Call', { configurable: true, writable: true, value: stub });
+              } catch (_) {}
+            }
+          }
+          return {
+            Msg: !!s.Msg,
+            Chat: !!s.Chat,
+            AppState: !!s.AppState,
+            Conn: !!s.Conn,
+            Call: !!(s.Call && typeof s.Call.on === 'function'),
+            getChat: !!(window.WWebJS && typeof window.WWebJS.getChat === 'function')
+          };
+        })()`)) as Record<string, boolean>;
+      } catch (err) {
+        console.warn(`[WA] Store probe failed (attempt ${attempt}):`, err);
+      }
+    }
+
+    const readyEnough =
+      storeProbe?.Msg &&
+      storeProbe?.Chat &&
+      storeProbe?.AppState &&
+      storeProbe?.Conn &&
+      storeProbe?.Call;
+
+    if (readyEnough && page) {
+      try {
+        if (!storeProbe?.getChat) {
+          await page.evaluate(LoadUtils);
+          console.info(`[WA] Injected WWebJS LoadUtils (attempt ${attempt})`);
+        }
+        await anyClient.attachEventListeners();
+        if (anyClient._eventListenersAttached) {
+          console.info(`[WA] Store listeners attached (attempt ${attempt})`);
+          return;
+        }
+      } catch (err) {
+        console.error(`[WA] attachEventListeners failed (attempt ${attempt}):`, err);
+      }
+    } else if (attempt === 1 || attempt % 5 === 0) {
+      console.info(
+        `[WA] waiting for Store modules (attempt ${attempt}/${maxAttempts})`,
+        storeProbe,
+      );
+    }
+
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+
+  console.error("[WA] Gave up attaching Store listeners — reconnect may be required");
+}
+
+/**
+ * WA Web baru: processMediaData mengembalikan model MediaData dengan `id` kosong.
+ * WWebJS.sendMessage men-spread `mediaOptions.toJSON()` SETELAH `id: newMsgKey`,
+ * sehingga id pesan tertimpa undefined → "Data passed to getter must include an id property".
+ * Kembalikan objek polos tanpa `id`. Idempotent; perlu diulang setelah page reload.
+ */
+const MEDIA_SEND_PATCH = `(() => {
+  const W = window.WWebJS;
+  if (!W || typeof W.processMediaData !== 'function') return false;
+  if (W.__mediaIdPatched) return true;
+  const orig = W.processMediaData;
+  W.processMediaData = async function (...args) {
+    const m = await orig.apply(this, args);
+    const j = m && typeof m.toJSON === 'function' ? m.toJSON() : { ...m };
+    delete j.id;
+    for (const k of Object.keys(j)) if (j[k] === undefined) delete j[k];
+    return j;
+  };
+  W.__mediaIdPatched = true;
+  return true;
+})()`;
+
+async function ensureMediaSendPatch(client: Client = whatsAppClient): Promise<boolean> {
+  const page = (client as Client & {
+    pupPage?: { evaluate: (fn: string) => Promise<unknown> };
+  }).pupPage;
+  if (!page) return false;
+  try {
+    return (await page.evaluate(MEDIA_SEND_PATCH)) === true;
+  } catch (err) {
+    console.warn("[WA] media send patch failed:", err);
+    return false;
+  }
+}
+
 // ── Wire up event listeners ─────────────────────────────────────────
 function attachListeners(client: Client) {
   client.once("ready", () => {
@@ -137,6 +331,7 @@ function attachListeners(client: Client) {
     clearQr();
     // Must finish store heal + compat patch BEFORE advertising ready.
     void (async () => {
+      await ensureWaMessageListeners(client);
       try {
         const health = await ensureWhatsAppStore(client, { retries: 20, delayMs: 1000 });
         if (!health.ok) {
@@ -151,6 +346,7 @@ function attachListeners(client: Client) {
       } catch (err) {
         console.warn("[WA Compat] patch on ready failed:", err);
       }
+      await ensureMediaSendPatch(client);
       setState("ready");
       console.info("WhatsApp Client is ready! (compat=on)");
     })();
@@ -221,6 +417,7 @@ async function init() {
 
   attachListeners(whatsAppClient);
   whatsAppClient.initialize();
+  startHealthWatchdog();
 }
 
 /** Logout dari WhatsApp, lalu inisialisasi client baru (perlu scan QR lagi) */
@@ -255,6 +452,19 @@ async function logoutSession(): Promise<void> {
 
 /** Destroy client lama dan buat + initialize ulang (tanpa restart container) */
 async function reconnect(): Promise<void> {
+  if (reconnectInProgress) {
+    console.info("[WA Reconnect] Already in progress, skipped");
+    return;
+  }
+  reconnectInProgress = true;
+  try {
+    await doReconnect();
+  } finally {
+    reconnectInProgress = false;
+  }
+}
+
+async function doReconnect(): Promise<void> {
   console.info("[WA Reconnect] Starting reconnect...");
   clearAutoReconnectTimer();
   clearQr();
@@ -357,5 +567,14 @@ async function getQr(): Promise<QrInfo> {
   };
 }
 
-export { whatsAppClient, init, reconnect, logoutSession, isReady, getStatus, getQr };
+export {
+  whatsAppClient,
+  init,
+  reconnect,
+  logoutSession,
+  isReady,
+  getStatus,
+  getQr,
+  ensureMediaSendPatch,
+};
 export type { ClientState, ClientStatus, QrInfo };
